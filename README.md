@@ -14,11 +14,11 @@ AI와 RAG(Retrieval-Augmented Generation) 기술을 활용한 지식관리 시�
 - **RAG 챗봇**: 저장된 지식 기반 질의응답 서비스
 
 ### 기술 스택
-- **Backend**: Python, FastAPI
-- **AI Framework**: LangChain
-- **AI Services**: Azure AI Services
-- **Vector Database**: Vector Embedding & Storage
-- **Document Processing**: Agent & Tool 기반 검증
+- **Frontend**: Streamlit (Python Web Framework)
+- **Backend Services**: Python, LangChain
+- **AI Services**: OpenAI, Azure OpenAI
+- **Vector Database**: FAISS
+- **Document Processing**: PyPDF2, python-docx, python-pptx
 
 ## 🚀 핵심 기능
 
@@ -44,15 +44,41 @@ AI와 RAG(Retrieval-Augmented Generation) 기술을 활용한 지식관리 시�
 
 ```
 ktds-610-msai-mvp/
-├── app/
-│   ├── api/                 # API 라우터
-│   ├── core/               # 핵심 설정
-│   ├── models/             # 데이터 모델
-│   ├── services/           # 비즈니스 로직
-│   └── utils/              # 유틸리티
-├── docs/                   # 문서
-├── tests/                  # 테스트
-└── requirements.txt        # 의존성
+├── chatbot/                # 챗봇 기능 모듈
+│   ├── __init__.py
+│   ├── ui.py              # 챗봇 UI 렌더링
+│   ├── service.py         # 챗봇 서비스 로직
+│   └── components.py      # 챗봇 UI 컴포넌트
+├── knowledge/              # 지식 관리 모듈
+│   ├── __init__.py
+│   ├── ui.py              # 지식 등록 UI
+│   ├── service.py         # 지식 관리 서비스
+│   └── components.py      # 지식 관리 컴포넌트
+├── board/                  # 게시판 모듈
+│   ├── __init__.py
+│   ├── ui.py              # 게시판 UI
+│   ├── service.py         # 게시판 서비스
+│   └── components.py      # 게시판 컴포넌트
+├── config/                 # 설정 관리
+│   ├── __init__.py
+│   └── settings.py        # LLM, DB 등 설정
+├── components/             # 공통 UI 컴포넌트
+│   ├── __init__.py
+│   ├── sidebar.py         # 사이드바
+│   └── chat.py            # 채팅 컴포넌트
+├── services/               # 공통 서비스
+│   ├── __init__.py
+│   ├── document_analyzer.py
+│   ├── llm_service.py
+│   └── vector_db.py
+├── utils/                  # 유틸리티
+│   ├── __init__.py
+│   ├── file_processor.py
+│   └── session_manager.py
+├── app.py                  # 기존 단일 파일 앱
+├── app_new.py             # 모듈화된 메인 앱
+├── .env.example           # 환경변수 템플릿
+└── requirements.txt       # 의존성
 ```
 
 ## ⚙️ 설치 및 실행
@@ -74,8 +100,14 @@ cp .env.example .env
 
 ### 실행
 ```bash
-# 개발 서버 실행
-uvicorn app.main:app --reload
+# 기존 단일 파일 버전 실행
+streamlit run app.py
+
+# 모듈화된 버전 실행 (권장)
+streamlit run app_new.py
+
+# 특정 포트로 실행
+streamlit run app_new.py --server.port 8501
 ```
 
 ## 🔄 워크플로우

@@ -12,6 +12,8 @@ from langchain_openai import AzureOpenAI
 from dotenv import load_dotenv
 import os
 from azure.core.credentials import AzureKeyCredential
+from langchain.prompts import PromptTemplate
+from langchain.output_parsers import StrOutputParser
 
 load_dotenv()
 
@@ -158,8 +160,75 @@ class KnowledgeService:
 
     def analyze_document(self, content: str, filename: str, settings: Dict = None) -> Dict:
         """문서 분석 실행"""
-        # 분석 시뮬레이션 (실제 환경에서는 시간 단축)
-        time.sleep(2)
+        
+        template = f"""
+        [역할]  
+        당신은 IT 회사의 지식 관리 전문가입니다.  
+        입력된 텍스트 문서(원본 지식 문서)를 분석하여, 지식자산화에 필요한 메타데이터를 추출하고 개선이 필요한 보완점을 도출하세요.  
+
+        [입력]  
+        {content}
+
+        [지시사항]  
+        다음 항목을 반드시 포함하여 분석 결과를 작성하세요.  
+
+        ## 1. 메타데이터 추출
+        - 문서 종류: {{PoC 보고서 | Lessons Learned | 기술자료 | 프로젝트 산출물 | 기타}}
+        - 주제(Topic): 한 줄 요약  
+        - 작성일/작성자: 원문에서 발견되면 추출, 없으면 "미확인"  
+        - 프로젝트/적용 분야: 문맥에서 유추  
+        - 주요 키워드(태그): 핵심 기술, 도메인, 관련 용어를 5~10개  
+
+        ## 2. 문서 구조/목차 분석
+        - 문서 내 존재하는 주요 섹션/항목 목록화  
+        - 각 섹션이 다루는 내용 요약  
+
+        ## 3. 활용 가능성 분석
+        - 이 문서가 지식자산으로서 어떤 가치를 가질 수 있는지  
+        - 재사용/참조 가능한 부분  
+
+        ## 4. 보완이 필요한 점
+        - 빠진 항목 (예: 목적, 결과, 교훈, 적용 방안 등)  
+        - 불명확하거나 정리되지 않은 부분  
+        - 검색/재사용 관점에서 개선해야 할 점  
+
+        [출력 형식]  
+        아래 JSON 구조로 결과를 제공합니다.  
+
+        ```json
+        {{
+            "metadata": {
+                "type": "",
+                "topic": "",
+                "author": "",
+                "date": "",
+                "project_area": "",
+                "keywords": []
+            },
+            "structure": [
+                {
+                "section": "",
+                "summary": ""
+                }
+            ],
+            "usability": "이 문서가 지식자산으로서 어떻게 활용될 수 있는지 설명",
+            "improvements": [
+                "보완점1",
+                "보완점2",
+                "보완점3"
+            ]
+        }}
+        """
+
+        prompt = PromptTemplate.from_template(template)
+
+        chain = prompt | llm | StrOutputParser()
+
+        response = chain.invoke({
+            content: content
+        })
+
+        return response
 
         # 설정에 따른 분석 실행
         if settings and settings.get('depth') == '전문가':

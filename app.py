@@ -48,59 +48,6 @@ def initialize_session_state():
     if 'knowledge_service' not in st.session_state:
         st.session_state.knowledge_service = KnowledgeService()
 
-# 파일 분석 시뮬레이션
-def analyze_document(file_content: str, filename: str) -> Dict:
-    """문서 내용을 분석하고 보완사항 제안"""
-    # 시뮬레이션된 분석 결과
-    analysis_result = {
-        "original_length": len(file_content),
-        "issues_found": [
-            "목차가 누락되어 있습니다",
-            "결론 부분이 불완전합니다",
-            "참고문헌이 부족합니다",
-            "예시가 더 필요합니다"
-        ],
-        "improvements": [
-            "명확한 목차 구조 추가",
-            "상세한 결론 및 요약 보완",
-            "관련 참고문헌 추가",
-            "실무 예시 및 사례 보완"
-        ],
-        "quality_score": 75,
-        "enhanced_content": f"""
-# {filename.split('.')[0]} - 보완된 버전
-
-## 목차
-1. 개요
-2. 주요 내용
-3. 상세 분석
-4. 결론 및 요약
-5. 참고문헌
-
-## 원본 내용
-{file_content}
-
-## 보완된 내용
-
-### 상세 분석
-본 문서의 주요 내용을 바탕으로 다음과 같은 분석을 제공합니다:
-- 핵심 개념 정리
-- 실무 적용 방안
-- 주의사항 및 제한점
-
-### 결론 및 요약
-이 문서를 통해 다음과 같은 인사이트를 얻을 수 있습니다:
-1. 주요 핵심 포인트
-2. 실무 적용 가능성
-3. 향후 발전 방향
-
-### 참고문헌
-- 관련 업계 보고서
-- 학술 논문 참조
-- 실무 가이드라인
-"""
-    }
-    return analysis_result
 
 # 챗봇 화면
 def chatbot_page():
@@ -183,7 +130,10 @@ def knowledge_registration_page():
                     with st.spinner("AI가 문서를 분석하고 있습니다..."):
                         time.sleep(2)  # 분석 시뮬레이션
 
-                        analysis_result = analyze_document(st.session_state.current_file_content, uploaded_file.name)
+                        analysis_result = knowledge_service.analyze_document(
+                            st.session_state.current_file_content,
+                            uploaded_file.name
+                        )
                         st.session_state.current_analysis = analysis_result
                         st.success("분석 완료!")
                 else:
@@ -196,16 +146,57 @@ def knowledge_registration_page():
             result = st.session_state.current_analysis
 
             # 품질 점수
-            st.metric("품질 점수", f"{result['quality_score']}점", delta="25점 개선 가능")
+            original_length = result.get('original_length', 0)
+            enhanced_length = result.get('enhanced_length', 0)
+            improvement_delta = enhanced_length - original_length
+
+            col_score1, col_score2 = st.columns(2)
+            with col_score1:
+                st.metric("품질 점수", f"{result['quality_score']}점")
+            with col_score2:
+                st.metric("문서 길이", f"{enhanced_length}자", delta=f"+{improvement_delta}자")
+
+            # 메타데이터 정보
+            if 'metadata' in result:
+                metadata = result['metadata']
+
+                # 에러 정보가 있으면 경고 표시
+                if 'error_info' in metadata:
+                    error_info = metadata['error_info']
+                    st.warning(f"⚠️ AI 분석 실패: {error_info['llm_error'][:100]}... (기본 분석기 사용됨)")
+
+                with st.expander("📊 분석 메타데이터"):
+                    col_meta1, col_meta2, col_meta3 = st.columns(3)
+                    with col_meta1:
+                        st.write(f"**분석 시간:** {metadata['analyzed_at'].strftime('%Y-%m-%d %H:%M')}")
+                    with col_meta2:
+                        st.write(f"**파일명:** {metadata['filename']}")
+                    with col_meta3:
+                        analyzer_version = metadata['analyzer_version']
+                        if 'Fallback' in analyzer_version:
+                            st.write(f"**분석기 버전:** {analyzer_version} 🔄")
+                        else:
+                            st.write(f"**분석기 버전:** {analyzer_version} ✨")
+
+                    # LLM 메타데이터가 있으면 추가 표시
+                    if 'llm_metadata' in metadata and metadata['llm_metadata']:
+                        llm_meta = metadata['llm_metadata']
+                        st.write("**AI 분석 정보:**")
+                        if 'type' in llm_meta:
+                            st.write(f"- 문서 종류: {llm_meta['type']}")
+                        if 'project_area' in llm_meta:
+                            st.write(f"- 프로젝트 분야: {llm_meta['project_area']}")
+                        if 'keywords' in llm_meta and llm_meta['keywords']:
+                            st.write(f"- 키워드: {', '.join(llm_meta['keywords'])}")
 
             # 발견된 문제점
             st.subheader("🔍 발견된 문제점")
-            for issue in result['issues_found']:
+            for issue in result.get('issues_found', []):
                 st.warning(f"• {issue}")
 
             # 개선 사항
             st.subheader("✨ 제안 개선사항")
-            for improvement in result['improvements']:
+            for improvement in result.get('improvements', []):
                 st.info(f"• {improvement}")
 
             # 처리 버튼들
@@ -238,7 +229,7 @@ def knowledge_registration_page():
 
             # 보완된 내용 미리보기
             with st.expander("📝 보완된 내용 미리보기"):
-                st.text_area("", result['enhanced_content'], height=300)
+                st.markdown(result['enhanced_content'])
 
 # 게시판 화면
 def board_page():

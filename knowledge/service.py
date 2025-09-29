@@ -8,12 +8,12 @@ from typing import Dict, Any, Tuple, Optional
 from utils.file_processor import FileProcessor
 from services.document_analyzer import DocumentAnalyzer
 from markitdown import MarkItDown
-from langchain_openai import AzureOpenAI
+from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
 import os
 from azure.core.credentials import AzureKeyCredential
 from langchain.prompts import PromptTemplate
-from langchain.output_parsers import StrOutputParser
+from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
@@ -34,7 +34,7 @@ print("api_version: ", api_version)
 # 배포 이름: Foundry에서 만든 배포명과 동일해야 함
 DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
 print("DEPLOYMENT_NAME: ", DEPLOYMENT_NAME)
-llm = AzureOpenAI(
+llm = AzureChatOpenAI(
 		azure_endpoint=endpoint,
 		api_key=api_key,
 		api_version=api_version,
@@ -161,55 +161,55 @@ class KnowledgeService:
     def analyze_document(self, content: str, filename: str, settings: Dict = None) -> Dict:
         """문서 분석 실행"""
         
-        template = f"""
-        [역할]  
-        당신은 IT 회사의 지식 관리 전문가입니다.  
-        입력된 텍스트 문서(원본 지식 문서)를 분석하여, 지식자산화에 필요한 메타데이터를 추출하고 개선이 필요한 보완점을 도출하세요.  
+        template = """
+        [역할]
+        당신은 IT 회사의 지식 관리 전문가입니다.
+        입력된 텍스트 문서(원본 지식 문서)를 분석하여, 지식자산화에 필요한 메타데이터를 추출하고 개선이 필요한 보완점을 도출하세요.
 
-        [입력]  
+        [입력]
         {content}
 
-        [지시사항]  
-        다음 항목을 반드시 포함하여 분석 결과를 작성하세요.  
+        [지시사항]
+        다음 항목을 반드시 포함하여 분석 결과를 작성하세요.
 
         ## 1. 메타데이터 추출
         - 문서 종류: {{PoC 보고서 | Lessons Learned | 기술자료 | 프로젝트 산출물 | 기타}}
-        - 주제(Topic): 한 줄 요약  
-        - 작성일/작성자: 원문에서 발견되면 추출, 없으면 "미확인"  
-        - 프로젝트/적용 분야: 문맥에서 유추  
-        - 주요 키워드(태그): 핵심 기술, 도메인, 관련 용어를 5~10개  
+        - 주제(Topic): 한 줄 요약
+        - 작성일/작성자: 원문에서 발견되면 추출, 없으면 "미확인"
+        - 프로젝트/적용 분야: 문맥에서 유추
+        - 주요 키워드(태그): 핵심 기술, 도메인, 관련 용어를 5~10개
 
         ## 2. 문서 구조/목차 분석
-        - 문서 내 존재하는 주요 섹션/항목 목록화  
-        - 각 섹션이 다루는 내용 요약  
+        - 문서 내 존재하는 주요 섹션/항목 목록화
+        - 각 섹션이 다루는 내용 요약
 
         ## 3. 활용 가능성 분석
-        - 이 문서가 지식자산으로서 어떤 가치를 가질 수 있는지  
-        - 재사용/참조 가능한 부분  
+        - 이 문서가 지식자산으로서 어떤 가치를 가질 수 있는지
+        - 재사용/참조 가능한 부분
 
         ## 4. 보완이 필요한 점
-        - 빠진 항목 (예: 목적, 결과, 교훈, 적용 방안 등)  
-        - 불명확하거나 정리되지 않은 부분  
-        - 검색/재사용 관점에서 개선해야 할 점  
+        - 빠진 항목 (예: 목적, 결과, 교훈, 적용 방안 등)
+        - 불명확하거나 정리되지 않은 부분
+        - 검색/재사용 관점에서 개선해야 할 점
 
-        [출력 형식]  
-        아래 JSON 구조로 결과를 제공합니다.  
+        [출력 형식]
+        아래 JSON 구조로 결과를 제공합니다.
 
         ```json
         {{
-            "metadata": {
+            "metadata": {{
                 "type": "",
                 "topic": "",
                 "author": "",
                 "date": "",
                 "project_area": "",
                 "keywords": []
-            },
+            }},
             "structure": [
-                {
+                {{
                 "section": "",
                 "summary": ""
-                }
+                }}
             ],
             "usability": "이 문서가 지식자산으로서 어떻게 활용될 수 있는지 설명",
             "improvements": [
@@ -220,23 +220,133 @@ class KnowledgeService:
         }}
         """
 
-        prompt = PromptTemplate.from_template(template)
+        # LLM 분석 시도
+        try:
+            prompt = PromptTemplate.from_template(template)
+            chain = prompt | llm | StrOutputParser()
 
-        chain = prompt | llm | StrOutputParser()
+            print("content: ", content[:50])
 
-        response = chain.invoke({
-            content: content
-        })
+            response = chain.invoke({
+                "content": content
+            })
 
-        return response
+            # JSON 응답을 파싱하여 기존 구조와 호환되도록 변환
+            import json
+            # JSON 블록에서 실제 JSON만 추출
+            if "```json" in response:
+                json_start = response.find("```json") + 7
+                json_end = response.find("```", json_start)
+                json_str = response[json_start:json_end].strip()
+            else:
+                json_str = response
 
-        # 설정에 따른 분석 실행
-        if settings and settings.get('depth') == '전문가':
-            return self._expert_analysis(content, filename)
-        elif settings and settings.get('depth') == '상세':
-            return self._detailed_analysis(content, filename)
-        else:
-            return self.document_analyzer.analyze_document(content, filename)
+            llm_result = json.loads(json_str)
+
+            # 기존 DocumentAnalyzer 구조와 호환되도록 변환
+            enhanced_content = self._create_enhanced_content(content, llm_result)
+            return {
+                "original_content": content,
+                "enhanced_content": enhanced_content,
+                "quality_score": self._calculate_quality_score(content, llm_result),
+                "original_length": len(content),
+                "enhanced_length": len(enhanced_content),
+                "issues_found": llm_result.get("improvements", []),
+                "improvements": llm_result.get("improvements", []),
+                "metadata": {
+                    "analyzed_at": datetime.now(),
+                    "filename": filename,
+                    "analyzer_version": "LLM-1.0",
+                    "llm_metadata": llm_result.get("metadata", {})
+                },
+                "llm_analysis": llm_result
+            }
+        except Exception as e:
+            # LLM 분석 실패시 기존 DocumentAnalyzer로 fallback
+            print(f"LLM 분석 실패 (네트워크 오류 또는 파싱 실패), fallback 사용: {e}")
+            return self._fallback_analysis(content, filename, str(e))
+
+    def _create_enhanced_content(self, original_content: str, llm_result: Dict) -> str:
+        """LLM 분석 결과를 기반으로 향상된 콘텐츠 생성"""
+        metadata = llm_result.get("metadata", {})
+        structure = llm_result.get("structure", [])
+        usability = llm_result.get("usability", "")
+        improvements = llm_result.get("improvements", [])
+
+        enhanced = f"""# {metadata.get('topic', '문서 분석 결과')}
+
+## 📋 문서 메타데이터
+- **문서 종류**: {metadata.get('type', '미분류')}
+- **주제**: {metadata.get('topic', '미확인')}
+- **작성자**: {metadata.get('author', '미확인')}
+- **작성일**: {metadata.get('date', '미확인')}
+- **프로젝트/분야**: {metadata.get('project_area', '미확인')}
+- **키워드**: {', '.join(metadata.get('keywords', []))}
+
+## 📑 원본 내용
+{original_content}
+
+## 🔍 문서 구조 분석
+"""
+        for section in structure:
+            enhanced += f"\n### {section.get('section', '섹션')}\n{section.get('summary', '내용 요약')}\n"
+
+        enhanced += f"""
+## 💡 활용 가능성
+{usability}
+
+## ✨ 개선 제안사항
+"""
+        for i, improvement in enumerate(improvements, 1):
+            enhanced += f"{i}. {improvement}\n"
+
+        enhanced += """
+---
+*본 문서는 AI 지식관리 시스템에 의해 분석 및 보완되었습니다.*
+"""
+        return enhanced.strip()
+
+    def _calculate_quality_score(self, content: str, llm_result: Dict) -> int:
+        """콘텐츠와 LLM 분석을 기반으로 품질 점수 계산"""
+        base_score = 60
+
+        # 길이 기반 점수
+        length_score = min(len(content) // 100, 20)
+
+        # 메타데이터 완성도
+        metadata = llm_result.get("metadata", {})
+        metadata_score = 0
+        for key in ["type", "topic", "author", "date", "project_area"]:
+            if metadata.get(key) and metadata[key] != "미확인" and metadata[key] != "":
+                metadata_score += 2
+
+        # 키워드 개수
+        keywords_score = min(len(metadata.get("keywords", [])) * 1, 10)
+
+        # 구조 분석 품질
+        structure_score = min(len(llm_result.get("structure", [])) * 3, 15)
+
+        total_score = base_score + length_score + metadata_score + keywords_score + structure_score
+        return min(total_score, 100)
+
+    def _fallback_analysis(self, content: str, filename: str, error_msg: str) -> Dict:
+        """LLM 분석 실패시 fallback 분석"""
+        basic_result = self.document_analyzer.analyze_document(content, filename)
+
+        # 에러 정보를 메타데이터에 추가
+        basic_result["metadata"]["error_info"] = {
+            "llm_error": error_msg,
+            "fallback_used": True,
+            "error_time": datetime.now()
+        }
+        basic_result["metadata"]["analyzer_version"] = "Fallback-1.0"
+
+        # 에러 관련 개선사항 추가
+        if "Connection error" in error_msg or "getaddrinfo failed" in error_msg:
+            basic_result["issues_found"].insert(0, "⚠️ AI 분석 서비스 연결 실패 - 네트워크 연결을 확인해주세요")
+            basic_result["improvements"].insert(0, "네트워크 연결 상태 확인 후 재시도")
+
+        return basic_result
 
     def _expert_analysis(self, content: str, filename: str) -> Dict:
         """전문가 수준 분석"""

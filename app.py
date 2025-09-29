@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 import tempfile
 from typing import List, Dict
+from knowledge.service import KnowledgeService
 
 # Streamlit 페이지 설정
 st.set_page_config(
@@ -44,6 +45,8 @@ def initialize_session_state():
         st.session_state.board_posts = []
     if 'vector_db' not in st.session_state:
         st.session_state.vector_db = []
+    if 'knowledge_service' not in st.session_state:
+        st.session_state.knowledge_service = KnowledgeService()
 
 # 파일 분석 시뮬레이션
 def analyze_document(file_content: str, filename: str) -> Dict:
@@ -151,21 +154,40 @@ def knowledge_registration_page():
         if uploaded_file is not None:
             st.success(f"파일 업로드 완료: {uploaded_file.name}")
 
-            # 파일 내용 읽기 (텍스트 파일만 시뮬레이션)
-            if uploaded_file.type == "text/plain":
-                file_content = str(uploaded_file.read(), "utf-8")
-            else:
-                file_content = f"[{uploaded_file.name}] 파일 내용 (시뮬레이션)"
+            # 파일이 바뀌면 기존 분석 결과 클리어
+            if 'current_filename' not in st.session_state or st.session_state.current_filename != uploaded_file.name:
+                st.session_state.current_filename = uploaded_file.name
+                if 'current_analysis' in st.session_state:
+                    del st.session_state.current_analysis
+                if 'current_file_content' in st.session_state:
+                    del st.session_state.current_file_content
 
-            st.text_area("파일 내용 미리보기", file_content[:500] + "...", height=200)
+            # MarkItDown을 사용한 파일 미리보기
+            knowledge_service = st.session_state.knowledge_service
+
+            with st.spinner("파일 내용을 변환하는 중..."):
+                preview_content = knowledge_service.get_file_preview(uploaded_file)
+
+            st.text_area("📄 파일 미리보기", preview_content, height=200)
+
+            # 전체 변환된 내용을 세션에 저장 (분석용)
+            if 'current_file_content' not in st.session_state:
+                success, full_content = knowledge_service.convert_file_to_text(uploaded_file)
+                if success:
+                    st.session_state.current_file_content = full_content
+                else:
+                    st.session_state.current_file_content = preview_content
 
             if st.button("🔍 분석 및 보완", type="primary"):
-                with st.spinner("AI가 문서를 분석하고 있습니다..."):
-                    time.sleep(2)  # 분석 시뮬레이션
+                if 'current_file_content' in st.session_state:
+                    with st.spinner("AI가 문서를 분석하고 있습니다..."):
+                        time.sleep(2)  # 분석 시뮬레이션
 
-                    analysis_result = analyze_document(file_content, uploaded_file.name)
-                    st.session_state.current_analysis = analysis_result
-                    st.success("분석 완료!")
+                        analysis_result = analyze_document(st.session_state.current_file_content, uploaded_file.name)
+                        st.session_state.current_analysis = analysis_result
+                        st.success("분석 완료!")
+                else:
+                    st.error("파일 내용을 먼저 변환해주세요.")
 
     with col2:
         st.subheader("📊 분석 결과")

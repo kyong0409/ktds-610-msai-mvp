@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, Tuple, Optional
 from utils.file_processor import FileProcessor
 from services.document_analyzer import DocumentAnalyzer
+from markitdown import MarkItDown
 
 class KnowledgeService:
     """지식 관리 서비스 클래스"""
@@ -14,6 +15,7 @@ class KnowledgeService:
     def __init__(self):
         self.file_processor = FileProcessor()
         self.document_analyzer = DocumentAnalyzer()
+        self.markitdown = MarkItDown()
 
     def process_uploaded_file(self, uploaded_file) -> Tuple[Optional[Dict], Optional[str]]:
         """업로드된 파일 처리"""
@@ -31,6 +33,95 @@ class KnowledgeService:
         file_content = self.file_processor.extract_text(uploaded_file)
 
         return file_info, file_content
+
+    def convert_file_to_text(self, uploaded_file) -> Tuple[bool, str]:
+        """MarkItDown을 사용하여 파일을 텍스트로 변환"""
+        try:
+            # 임시 파일로 저장
+            import tempfile
+            import os
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
+                tmp_file.write(uploaded_file.read())
+                tmp_file_path = tmp_file.name
+
+            # MarkItDown으로 변환
+            result = self.markitdown.convert(tmp_file_path)
+
+            # 임시 파일 삭제
+            os.unlink(tmp_file_path)
+
+            # 업로드 파일 포인터 리셋
+            uploaded_file.seek(0)
+
+            return True, result.text_content
+
+        except Exception as e:
+            # 업로드 파일 포인터 리셋
+            uploaded_file.seek(0)
+
+            # Fallback: 기존 파일 처리 방식 사용
+            fallback_content = self._fallback_text_extraction(uploaded_file)
+            if fallback_content:
+                return True, fallback_content
+
+            return False, f"파일 변환 중 오류 발생: {str(e)}"
+
+    def _fallback_text_extraction(self, uploaded_file) -> str:
+        """Fallback 텍스트 추출 (기존 방식)"""
+        try:
+            # 파일 포인터 리셋
+            uploaded_file.seek(0)
+
+            file_type = uploaded_file.type
+
+            if file_type == "text/plain":
+                return str(uploaded_file.read(), "utf-8")
+            elif file_type == "application/pdf":
+                try:
+                    import PyPDF2
+                    import io
+
+                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                    return text
+                except:
+                    return f"[PDF 파일: {uploaded_file.name}] - PDF 변환을 위해 'pip install markitdown[pdf]'를 실행해주세요."
+            elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                try:
+                    from docx import Document
+                    import io
+
+                    doc = Document(io.BytesIO(uploaded_file.read()))
+                    text = ""
+                    for paragraph in doc.paragraphs:
+                        text += paragraph.text + "\n"
+                    return text
+                except:
+                    return f"[Word 파일: {uploaded_file.name}] - 파일 내용을 읽을 수 없습니다."
+            else:
+                return f"[{uploaded_file.name}] - 지원되지 않는 파일 형식입니다."
+
+        except Exception as e:
+            return f"[파일 처리 오류] {str(e)}"
+        finally:
+            # 파일 포인터 리셋
+            uploaded_file.seek(0)
+
+    def get_file_preview(self, uploaded_file) -> str:
+        """파일 미리보기 텍스트 반환"""
+        success, content = self.convert_file_to_text(uploaded_file)
+
+        if success:
+            # 미리보기는 처음 1000자만 표시
+            preview_text = content[:1000]
+            if len(content) > 1000:
+                preview_text += "\n\n... (계속)"
+            return preview_text
+        else:
+            return content  # 오류 메시지 반환
 
     def analyze_document(self, content: str, filename: str, settings: Dict = None) -> Dict:
         """문서 분석 실행"""

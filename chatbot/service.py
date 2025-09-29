@@ -3,6 +3,7 @@
 """
 import streamlit as st
 from typing import List, Dict
+from datetime import datetime
 from config.settings import get_config
 
 class ChatbotService:
@@ -126,3 +127,45 @@ class ChatbotService:
             'assistant_messages': len([msg for msg in chat_history if msg.get('role') == 'assistant']),
             'available_documents': len(st.session_state.get('vector_db', []))
         }
+
+    def save_to_vector_db(self, enhanced_document: Dict, filename: str) -> Dict:
+        """VectorDB에 문서 저장"""
+        try:
+            if 'vector_db' not in st.session_state:
+                st.session_state.vector_db = []
+
+            # 중복 확인
+            existing = any(
+                doc.get('filename') == filename and
+                doc.get('content') == enhanced_document['enhanced_content']
+                for doc in st.session_state.vector_db
+            )
+
+            if existing:
+                return {
+                    "success": False,
+                    "message": "이미 VectorDB에 저장된 문서입니다."
+                }
+
+            # VectorDB에 추가
+            vector_entry = {
+                "content": enhanced_document['enhanced_content'],
+                "filename": filename,
+                "timestamp": datetime.now(),
+                "quality_score": enhanced_document.get('quality_score', 70),
+                "metadata": enhanced_document.get('generation_metadata', {})
+            }
+
+            st.session_state.vector_db.append(vector_entry)
+
+            return {
+                "success": True,
+                "message": "VectorDB 저장 완료!",
+                "count": len(st.session_state.vector_db)
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"VectorDB 저장 실패: {str(e)}"
+            }

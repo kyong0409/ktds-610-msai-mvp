@@ -8,7 +8,7 @@ from typing import Dict, Any, Tuple, Optional
 from utils.file_processor import FileProcessor
 from services.document_analyzer import DocumentAnalyzer
 from markitdown import MarkItDown
-from langchain_openai import AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from dotenv import load_dotenv
 import os
 from azure.core.credentials import AzureKeyCredential
@@ -26,6 +26,8 @@ key = AzureKeyCredential(AZURE_DOCUMENT_INTELLIGENCE_KEY)
 endpoint = os.environ["AZURE_ENDPOINT"]
 api_key = os.environ["AZURE_AI_FOUNDRY_KEY"]
 api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+embedding_api_version = os.getenv("AZURE_OPENAI_EMBEDDING_API_VERSION", "2024-12-01-preview")
+embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large")
 
 print("endpoint: ", endpoint)
 print("api_key: ", api_key)
@@ -347,6 +349,125 @@ class KnowledgeService:
             basic_result["improvements"].insert(0, "네트워크 연결 상태 확인 후 재시도")
 
         return basic_result
+
+    def generate_enhanced_knowledge_document(self, analysis_result: Dict, filename: str) -> Dict:
+        """분석 결과를 바탕으로 보완된 지식 문서 생성"""
+        
+        template = """
+        [역할]  
+        당신은 IT 회사의 지식 관리 전문가이자 기술 문서 편집자입니다.  
+        당신의 임무는 입력된 문서와 보완사항을 종합하여, 사내에서 활용 가능한 "표준 지식 문서" 형태로 재구성하는 것입니다.  
+
+        [입력]  
+        1. 원본 문서 (Original Document)  
+        {original_content}
+        2. 보완사항 (Improvement Points)  
+        {improvement_points}
+
+        [지시사항]  
+        1. 원본 문서를 분석하여 **핵심 내용**을 유지합니다.  
+        2. 보완사항을 반영하여 내용의 공백을 채우거나 표현을 개선합니다.  
+        3. 최종 산출물은 다음 표준 형식을 따릅니다:  
+
+        ### 메타데이터
+        - 문서 제목: # 문서의 주제/핵심 내용이 잘 나타나도록 작성합니다.  
+        - 작성자: 원문에서 발견되면 추출, 없으면 "미확인"
+        - 작성일:  
+        - 버전:  
+        - 프로젝트/적용 분야: 문맥에서 유추
+        - 주요 태그(키워드):  
+
+        ### 문서 본문
+        1. 목적 (Purpose)  
+        2. 배경 및 문제 정의 (Background / Problem Statement)  
+        3. 접근 방법 및 절차 (Approach / Methodology)  
+        4. 결과 및 성과 (Results / Outcomes)  
+        5. 한계 및 교훈 (Limitations / Lessons Learned)  
+        6. 적용 및 재사용 방안 (Application / Reusability)  
+        7. 참고 자료 (References)  
+
+        4. 내용이 부족한 경우, 보완사항을 활용하여 합리적으로 보강합니다. 단, 근거 없이 새로운 사실을 창작하지는 않습니다.  
+        5. 표현은 **명확하고 간결하며, 사내 검색/학습에 적합한 용어**를 사용합니다.  
+
+        [출력]  
+        위 형식에 맞춘 **완성된 지식 문서**를 제공합니다.  
+        """
+
+        prompt = PromptTemplate.from_template(template)
+
+        chain = prompt | llm | StrOutputParser()
+
+        # LLM으로 지식 문서 생성 시도
+        try:
+            response = chain.invoke({
+                "original_content": analysis_result['original_content'],
+                "improvement_points": analysis_result['improvements']
+            })
+
+            # 생성된 문서를 딕셔너리 형태로 반환
+            enhanced_document = {
+                "enhanced_content": response,
+                "quality_score": analysis_result.get('quality_score', 70),
+                "generation_metadata": {
+                    "generated_at": datetime.now(),
+                    "filename": filename,
+                    "method": "LLM Enhanced Generation",
+                    "version": "1.0"
+                }
+            }
+
+            return enhanced_document
+
+        except Exception as e:
+            # LLM 생성 실패시 fallback
+            print(f"LLM 지식 문서 생성 실패, fallback 사용: {e}")
+
+            # 기본 템플릿으로 fallback
+            fallback_content = f"""# {filename.split('.')[0]} - 지식 문서
+
+## 📋 메타데이터
+- **문서 제목**: {filename}
+- **작성자**: 미확인
+- **작성일**: {datetime.now().strftime('%Y-%m-%d')}
+- **버전**: 1.0
+- **프로젝트/적용 분야**: 미확인
+- **주요 태그**: 분석 중
+
+## 📖 문서 본문
+
+### 1. 목적 (Purpose)
+이 문서는 지식 관리 시스템을 통해 분석된 내용을 정리한 문서입니다.
+
+### 2. 원본 내용
+{analysis_result.get('original_content', '내용 없음')}
+
+### 3. 발견된 개선사항
+"""
+            for i, improvement in enumerate(analysis_result.get('improvements', []), 1):
+                fallback_content += f"{i}. {improvement}\n"
+
+            fallback_content += """
+### 4. 적용 및 재사용 방안
+- 향후 유사한 프로젝트에서 참고 자료로 활용 가능
+- 개선사항을 반영하여 문서 품질 향상 필요
+
+---
+*본 문서는 AI 지식관리 시스템에 의해 생성되었습니다.*
+"""
+
+            enhanced_document = {
+                "enhanced_content": fallback_content,
+                "quality_score": analysis_result.get('quality_score', 70),
+                "generation_metadata": {
+                    "generated_at": datetime.now(),
+                    "filename": filename,
+                    "method": "Fallback Template Generation",
+                    "version": "1.0",
+                    "error": str(e)
+                }
+            }
+
+            return enhanced_document
 
     def _expert_analysis(self, content: str, filename: str) -> Dict:
         """전문가 수준 분석"""

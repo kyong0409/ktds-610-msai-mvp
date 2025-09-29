@@ -6,6 +6,8 @@ import os
 import tempfile
 from typing import List, Dict
 from knowledge.service import KnowledgeService
+from chatbot.service import ChatbotService
+from board.service import BoardService
 
 # Streamlit 페이지 설정
 st.set_page_config(
@@ -47,6 +49,10 @@ def initialize_session_state():
         st.session_state.vector_db = []
     if 'knowledge_service' not in st.session_state:
         st.session_state.knowledge_service = KnowledgeService()
+    if 'chatbot_service' not in st.session_state:
+        st.session_state.chatbot_service = ChatbotService()
+    if 'board_service' not in st.session_state:
+        st.session_state.board_service = BoardService()
 
 
 # 챗봇 화면
@@ -199,37 +205,57 @@ def knowledge_registration_page():
             for improvement in result.get('improvements', []):
                 st.info(f"• {improvement}")
 
-            # 처리 버튼들
-            col2_1, col2_2 = st.columns(2)
+            # 보완된 지식 문서 생성 버튼
+            if st.button("📄 보완된 지식 문서 생성", type="primary", key="generate_enhanced_doc"):
+                with st.spinner("AI가 보완된 지식 문서를 생성하고 있습니다..."):
+                    enhanced_result = knowledge_service.generate_enhanced_knowledge_document(
+                        result, uploaded_file.name
+                    )
+                    st.session_state.enhanced_document = enhanced_result
+                    st.success("보완된 지식 문서 생성 완료!")
 
-            with col2_1:
-                if st.button("💾 VectorDB 저장", type="primary"):
-                    with st.spinner("VectorDB에 임베딩 중..."):
-                        time.sleep(1)
-                        st.session_state.vector_db.append({
-                            "content": result['enhanced_content'],
-                            "filename": uploaded_file.name,
-                            "timestamp": datetime.now()
-                        })
-                        st.success("VectorDB 저장 완료!")
+            # 보완된 문서가 생성되었을 때만 저장 버튼 표시
+            if 'enhanced_document' in st.session_state:
+                st.markdown("---")
+                st.subheader("📤 문서 저장")
 
-            with col2_2:
-                if st.button("📋 게시판 등록", type="secondary"):
-                    with st.spinner("게시판에 등록 중..."):
-                        time.sleep(1)
-                        st.session_state.board_posts.append({
-                            "title": f"[보완됨] {uploaded_file.name}",
-                            "content": result['enhanced_content'],
-                            "author": "AI System",
-                            "timestamp": datetime.now(),
-                            "views": 0,
-                            "quality_score": result['quality_score']
-                        })
-                        st.success("게시판 등록 완료!")
+                # 통합 저장 버튼
+                if st.button("💾 VectorDB & 게시판에 저장", type="primary", key="save_all"):
+                    with st.spinner("VectorDB와 게시판에 저장하고 있습니다..."):
+                        # 서비스 클래스 인스턴스 가져오기
+                        chatbot_service = st.session_state.chatbot_service
+                        board_service = st.session_state.board_service
 
-            # 보완된 내용 미리보기
-            with st.expander("📝 보완된 내용 미리보기"):
-                st.markdown(result['enhanced_content'])
+                        # VectorDB 저장
+                        vector_result = chatbot_service.save_to_vector_db(
+                            st.session_state.enhanced_document,
+                            uploaded_file.name
+                        )
+
+                        # 게시판 저장
+                        board_result = board_service.save_enhanced_document_to_board(
+                            st.session_state.enhanced_document,
+                            uploaded_file.name
+                        )
+
+                        # 결과 표시
+                        col_result1, col_result2 = st.columns(2)
+
+                        with col_result1:
+                            if vector_result['success']:
+                                st.success(f"✅ {vector_result['message']} (총 {vector_result['count']}개)")
+                            else:
+                                st.warning(f"⚠️ VectorDB: {vector_result['message']}")
+
+                        with col_result2:
+                            if board_result['success']:
+                                st.success(f"✅ {board_result['message']} (총 {board_result['count']}개)")
+                            else:
+                                st.warning(f"⚠️ 게시판: {board_result['message']}")
+
+                # 생성된 보완 문서 보기
+                with st.expander("📝 생성된 보완 문서 보기"):
+                    st.markdown(st.session_state.enhanced_document['enhanced_content'])
 
 # 게시판 화면
 def board_page():

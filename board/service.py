@@ -336,3 +336,47 @@ class BoardService:
         board_posts = st.session_state.get('board_posts', [])
         authors = set(post.get('author', 'Unknown') for post in board_posts)
         return sorted(list(authors))
+
+    def save_enhanced_document_to_board(self, enhanced_document: Dict, filename: str) -> Dict:
+        """보완된 문서를 게시판에 저장"""
+        try:
+            if 'board_posts' not in st.session_state:
+                st.session_state.board_posts = []
+
+            # 중복 확인
+            existing = any(
+                post.get('title') == f"[AI 보완] {filename}" and
+                post.get('content') == enhanced_document['enhanced_content']
+                for post in st.session_state.board_posts
+            )
+
+            if existing:
+                return {
+                    "success": False,
+                    "message": "이미 게시판에 등록된 문서입니다."
+                }
+
+            # 게시판에 추가
+            board_post = {
+                "title": f"[AI 보완] {filename}",
+                "content": enhanced_document['enhanced_content'],
+                "author": "AI Knowledge System",
+                "timestamp": datetime.now(),
+                "views": 0,
+                "quality_score": enhanced_document.get('quality_score', 70),
+                "generation_metadata": enhanced_document.get('generation_metadata', {})
+            }
+
+            st.session_state.board_posts.append(board_post)
+
+            return {
+                "success": True,
+                "message": "게시판 등록 완료!",
+                "count": len(st.session_state.board_posts)
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"게시판 등록 실패: {str(e)}"
+            }

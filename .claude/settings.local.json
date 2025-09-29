@@ -3,7 +3,8 @@
     "allow": [
       "Bash(mkdir:*)",
       "Bash(tree:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(streamlit run:*)"
     ],
     "deny": [],
     "ask": []

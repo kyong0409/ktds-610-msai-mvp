@@ -8,6 +8,39 @@ from typing import Dict, Any, Tuple, Optional
 from utils.file_processor import FileProcessor
 from services.document_analyzer import DocumentAnalyzer
 from markitdown import MarkItDown
+from langchain_openai import AzureOpenAI
+from dotenv import load_dotenv
+import os
+from azure.core.credentials import AzureKeyCredential
+
+load_dotenv()
+
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+AZURE_DOCUMENT_INTELLIGENCE_KEY = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+
+key = AzureKeyCredential(AZURE_DOCUMENT_INTELLIGENCE_KEY)
+
+# Azure OpenAI 설정
+endpoint = os.environ["AZURE_ENDPOINT"]
+api_key = os.environ["AZURE_AI_FOUNDRY_KEY"]
+api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+
+print("endpoint: ", endpoint)
+print("api_key: ", api_key)
+print("api_version: ", api_version)
+
+# 배포 이름: Foundry에서 만든 배포명과 동일해야 함
+DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
+print("DEPLOYMENT_NAME: ", DEPLOYMENT_NAME)
+llm = AzureOpenAI(
+		azure_endpoint=endpoint,
+		api_key=api_key,
+		api_version=api_version,
+		azure_deployment=DEPLOYMENT_NAME,
+		temperature=0.4,
+		max_retries=3,
+		timeout=30,
+)
 
 class KnowledgeService:
     """지식 관리 서비스 클래스"""
@@ -15,7 +48,7 @@ class KnowledgeService:
     def __init__(self):
         self.file_processor = FileProcessor()
         self.document_analyzer = DocumentAnalyzer()
-        self.markitdown = MarkItDown()
+        self.markitdown = MarkItDown(docintel_endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT, docintel_credential=key)
 
     def process_uploaded_file(self, uploaded_file) -> Tuple[Optional[Dict], Optional[str]]:
         """업로드된 파일 처리"""

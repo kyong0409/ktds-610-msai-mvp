@@ -25,7 +25,8 @@ def sidebar_navigation():
     pages = {
         "챗봇": "💬",
         "지식등록": "📚",
-        "게시판": "📋"
+        "게시판": "📋",
+        "지식창출": "🔬"
     }
 
     selected_page = st.sidebar.radio(
@@ -287,6 +288,280 @@ def board_page():
             st.markdown("---")
             st.text_area("내용", post['content'], height=200, key=f"content_{i}")
 
+# 지식창출 화면
+def knowledge_creation_page():
+    st.title("🔬 지식 창출")
+    st.markdown("Multi-Agent 시스템을 통해 새로운 지식을 창출합니다.")
+
+    # 상단 설정 패널
+    with st.expander("⚙️ 창출 설정", expanded=False):
+        col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
+
+        with col_cfg1:
+            st.subheader("🎯 창출 목표")
+            creation_goal = st.selectbox(
+                "목표 선택",
+                ["패턴 발견", "아날로지 생성", "지식 융합", "혁신 아이디어"]
+            )
+            quality_threshold = st.slider("품질 임계값", 0.5, 1.0, 0.75, 0.05)
+
+        with col_cfg2:
+            st.subheader("🤖 Agent 설정")
+            max_iterations = st.slider("최대 반복 횟수", 1, 10, 3)
+            agent_temperature = st.slider("창의성 수준", 0.0, 1.0, 0.3, 0.1)
+            enable_verification = st.checkbox("검증 단계 활성화", True)
+
+        with col_cfg3:
+            st.subheader("📊 데이터 소스")
+            vector_db_size = len(st.session_state.get('vector_db', []))
+            board_size = len(st.session_state.get('board_posts', []))
+            st.metric("VectorDB 문서", f"{vector_db_size}개")
+            st.metric("게시판 문서", f"{board_size}개")
+
+            include_vectordb = st.checkbox("VectorDB 포함", True)
+            include_board = st.checkbox("게시판 포함", True)
+
+    # 메인 컨테이너
+    col_main1, col_main2 = st.columns([2, 1])
+
+    with col_main1:
+        # 창출 프로세스 시작 버튼
+        st.subheader("🚀 지식 창출 실행")
+
+        if st.button("🔬 Multi-Agent 지식 창출 시작", type="primary", key="start_creation"):
+            # 세션 상태 초기화
+            st.session_state.creation_state = {
+                "current_stage": "normalize",
+                "iteration": 1,
+                "max_iterations": max_iterations,
+                "stages_completed": [],
+                "current_samples": [],
+                "summaries": [],
+                "proposals": [],
+                "verdicts": [],
+                "knotes": [],
+                "scores": {},
+                "is_running": True
+            }
+            st.rerun()
+
+        # 프로세스 진행 상황 표시
+        if 'creation_state' in st.session_state and st.session_state.creation_state.get('is_running'):
+            st.markdown("---")
+            show_creation_process()
+
+    with col_main2:
+        # 실시간 모니터링 패널
+        st.subheader("📈 실시간 모니터링")
+
+        if 'creation_state' in st.session_state:
+            creation_state = st.session_state.creation_state
+
+            # 진행률 표시
+            stages = ["normalize", "sample", "summarize", "synthesize", "verify", "productize", "score"]
+            current_stage_idx = stages.index(creation_state.get("current_stage", "normalize"))
+            progress = (current_stage_idx + 1) / len(stages)
+
+            st.progress(progress)
+            st.write(f"**현재 단계:** {creation_state.get('current_stage', 'None')}")
+            st.write(f"**반복:** {creation_state.get('iteration', 0)}/{creation_state.get('max_iterations', 0)}")
+
+            # 단계별 상태
+            with st.container():
+                st.write("**단계별 진행 상황:**")
+                for i, stage in enumerate(stages):
+                    if stage in creation_state.get('stages_completed', []):
+                        st.write(f"✅ {stage.title()}")
+                    elif stage == creation_state.get('current_stage'):
+                        st.write(f"🔄 {stage.title()} (진행중)")
+                    else:
+                        st.write(f"⏳ {stage.title()}")
+        else:
+            st.info("지식 창출을 시작하면 실시간 모니터링이 표시됩니다.")
+
+    # 결과 표시 영역
+    if 'creation_state' in st.session_state:
+        show_creation_results()
+
+def show_creation_process():
+    """창출 프로세스 진행 상황 표시"""
+    st.subheader("🔄 Multi-Agent 워크플로우")
+
+    creation_state = st.session_state.creation_state
+
+    # 시뮬레이션된 프로세스 실행 (실제로는 LangGraph가 처리)
+    with st.container():
+        # 1. Librarian (정규화)
+        with st.expander("📚 Librarian - 데이터 정규화", expanded=True):
+            if creation_state.get("current_stage") == "normalize":
+                with st.spinner("PII 필터링 및 데이터 정규화 중..."):
+                    time.sleep(1)
+                    st.success("✅ 데이터 정규화 완료")
+                    # 다음 단계로 이동
+                    creation_state["current_stage"] = "sample"
+                    creation_state["stages_completed"].append("normalize")
+                    st.rerun()
+            elif "normalize" in creation_state.get("stages_completed", []):
+                st.success("✅ 데이터 정규화 완료")
+            else:
+                st.info("⏳ 대기 중")
+
+        # 2. Sampler (다양성 샘플링)
+        with st.expander("🎲 Sampler - 다양성 샘플링", expanded=creation_state.get("current_stage") == "sample"):
+            if creation_state.get("current_stage") == "sample":
+                with st.spinner("MMR 기반 다양성 샘플링 중..."):
+                    time.sleep(1.5)
+                    st.success("✅ 10개 샘플 선택 완료")
+                    creation_state["current_samples"] = [f"Sample_{i+1}" for i in range(10)]
+                    creation_state["current_stage"] = "summarize"
+                    creation_state["stages_completed"].append("sample")
+                    st.rerun()
+            elif "sample" in creation_state.get("stages_completed", []):
+                st.success(f"✅ {len(creation_state.get('current_samples', []))}개 샘플 선택 완료")
+            else:
+                st.info("⏳ 대기 중")
+
+        # 3. Summarizer (구조화 요약)
+        with st.expander("📝 Summarizer - 구조화 요약", expanded=creation_state.get("current_stage") == "summarize"):
+            if creation_state.get("current_stage") == "summarize":
+                with st.spinner("구조화된 요약 생성 중..."):
+                    time.sleep(2)
+                    st.success("✅ 구조화 요약 완료")
+                    creation_state["summaries"] = [f"Summary_{i+1}" for i in range(10)]
+                    creation_state["current_stage"] = "synthesize"
+                    creation_state["stages_completed"].append("summarize")
+                    st.rerun()
+            elif "summarize" in creation_state.get("stages_completed", []):
+                st.success(f"✅ {len(creation_state.get('summaries', []))}개 요약 생성 완료")
+            else:
+                st.info("⏳ 대기 중")
+
+        # 4. Synthesizer (융합 제안)
+        with st.expander("🧬 Synthesizer - 지식 융합", expanded=creation_state.get("current_stage") == "synthesize"):
+            if creation_state.get("current_stage") == "synthesize":
+                with st.spinner("아날로지 및 패턴 기반 융합 제안 생성 중..."):
+                    time.sleep(2.5)
+                    st.success("✅ 융합 제안 생성 완료")
+                    creation_state["proposals"] = [f"Proposal_{i+1}" for i in range(5)]
+                    creation_state["current_stage"] = "verify"
+                    creation_state["stages_completed"].append("synthesize")
+                    st.rerun()
+            elif "synthesize" in creation_state.get("stages_completed", []):
+                st.success(f"✅ {len(creation_state.get('proposals', []))}개 융합 제안 생성 완료")
+            else:
+                st.info("⏳ 대기 중")
+
+        # 5. Verifier (검증)
+        with st.expander("🔍 Verifier - 검증", expanded=creation_state.get("current_stage") == "verify"):
+            if creation_state.get("current_stage") == "verify":
+                with st.spinner("반례/편향/외삽 위험 검증 중..."):
+                    time.sleep(2)
+                    st.success("✅ 검증 완료")
+                    creation_state["verdicts"] = [f"Verdict_{i+1}" for i in range(5)]
+                    creation_state["current_stage"] = "productize"
+                    creation_state["stages_completed"].append("verify")
+                    st.rerun()
+            elif "verify" in creation_state.get("stages_completed", []):
+                st.success(f"✅ {len(creation_state.get('verdicts', []))}개 제안 검증 완료")
+            else:
+                st.info("⏳ 대기 중")
+
+        # 6. Productizer (K-Note 생성)
+        with st.expander("📋 Productizer - K-Note 생성", expanded=creation_state.get("current_stage") == "productize"):
+            if creation_state.get("current_stage") == "productize":
+                with st.spinner("승인된 제안을 K-Note로 변환 중..."):
+                    time.sleep(1.5)
+                    st.success("✅ K-Note 생성 완료")
+                    creation_state["knotes"] = [f"KNote_{i+1}" for i in range(3)]
+                    creation_state["current_stage"] = "score"
+                    creation_state["stages_completed"].append("productize")
+                    st.rerun()
+            elif "productize" in creation_state.get("stages_completed", []):
+                st.success(f"✅ {len(creation_state.get('knotes', []))}개 K-Note 생성 완료")
+            else:
+                st.info("⏳ 대기 중")
+
+        # 7. Evaluator (평가)
+        with st.expander("📊 Evaluator - 평가", expanded=creation_state.get("current_stage") == "score"):
+            if creation_state.get("current_stage") == "score":
+                with st.spinner("신규성, 커버리지, 유용성 평가 중..."):
+                    time.sleep(1)
+                    # 시뮬레이션된 점수
+                    import random
+                    scores = {
+                        "novelty": round(random.uniform(0.6, 0.9), 2),
+                        "coverage": round(random.uniform(0.6, 0.9), 2),
+                        "utility": round(random.uniform(0.6, 0.9), 2)
+                    }
+                    creation_state["scores"] = scores
+                    avg_score = sum(scores.values()) / len(scores)
+
+                    if avg_score >= 0.75:
+                        st.success(f"✅ 목표 달성! 평균 점수: {avg_score:.2f}")
+                        creation_state["is_running"] = False
+                    else:
+                        st.warning(f"⚠️ 목표 미달. 평균 점수: {avg_score:.2f}")
+                        if creation_state["iteration"] < creation_state["max_iterations"]:
+                            creation_state["iteration"] += 1
+                            creation_state["current_stage"] = "sample"
+                            creation_state["stages_completed"] = ["normalize"]  # 일부 단계 유지
+                            st.info(f"🔄 반복 {creation_state['iteration']} 시작")
+                        else:
+                            st.error("❌ 최대 반복 횟수 도달. 프로세스 종료")
+                            creation_state["is_running"] = False
+
+                    creation_state["stages_completed"].append("score")
+                    st.rerun()
+            elif "score" in creation_state.get("stages_completed", []):
+                scores = creation_state.get("scores", {})
+                if scores:
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("신규성", f"{scores.get('novelty', 0):.2f}")
+                    with col2:
+                        st.metric("커버리지", f"{scores.get('coverage', 0):.2f}")
+                    with col3:
+                        st.metric("유용성", f"{scores.get('utility', 0):.2f}")
+            else:
+                st.info("⏳ 대기 중")
+
+def show_creation_results():
+    """창출 결과 표시"""
+    creation_state = st.session_state.creation_state
+
+    if not creation_state.get("is_running") and creation_state.get("knotes"):
+        st.markdown("---")
+        st.subheader("🎉 지식 창출 결과")
+
+        # 최종 성과 요약
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("생성된 K-Note", f"{len(creation_state.get('knotes', []))}개")
+        with col2:
+            st.metric("처리된 샘플", f"{len(creation_state.get('current_samples', []))}개")
+        with col3:
+            st.metric("반복 횟수", f"{creation_state.get('iteration', 0)}회")
+        with col4:
+            scores = creation_state.get("scores", {})
+            avg_score = sum(scores.values()) / len(scores) if scores else 0
+            st.metric("평균 품질", f"{avg_score:.2f}")
+
+        # 생성된 K-Note 목록
+        st.subheader("📋 생성된 K-Note")
+        for i, knote in enumerate(creation_state.get("knotes", []), 1):
+            with st.expander(f"K-Note {i}: {knote}"):
+                st.write("**제목**: 새로운 지식 패턴 발견")
+                st.write("**카테고리**: 패턴 융합")
+                st.write("**신뢰도**: 85%")
+                st.write("**근거 문서**: 3개")
+                st.text_area("내용", "여기에 실제 생성된 K-Note 내용이 표시됩니다...", height=100, key=f"knote_{i}")
+
+                col_action1, col_action2 = st.columns(2)
+                with col_action1:
+                    st.button(f"📚 게시판에 등록", key=f"save_knote_{i}")
+                with col_action2:
+                    st.button(f"💾 VectorDB에 저장", key=f"vector_knote_{i}")
+
 # 메인 앱
 def main():
     initialize_session_state()
@@ -301,6 +576,8 @@ def main():
         knowledge_registration_page()
     elif selected_page == "게시판":
         board_page()
+    elif selected_page == "지식창출":
+        knowledge_creation_page()
 
 if __name__ == "__main__":
     main()

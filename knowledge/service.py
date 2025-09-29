@@ -425,35 +425,35 @@ class KnowledgeService:
             # 기본 템플릿으로 fallback
             fallback_content = f"""# {filename.split('.')[0]} - 지식 문서
 
-## 📋 메타데이터
-- **문서 제목**: {filename}
-- **작성자**: 미확인
-- **작성일**: {datetime.now().strftime('%Y-%m-%d')}
-- **버전**: 1.0
-- **프로젝트/적용 분야**: 미확인
-- **주요 태그**: 분석 중
+                                    ## 📋 메타데이터
+                                    - **문서 제목**: {filename}
+                                    - **작성자**: 미확인
+                                    - **작성일**: {datetime.now().strftime('%Y-%m-%d')}
+                                    - **버전**: 1.0
+                                    - **프로젝트/적용 분야**: 미확인
+                                    - **주요 태그**: 분석 중
 
-## 📖 문서 본문
+                                    ## 📖 문서 본문
 
-### 1. 목적 (Purpose)
-이 문서는 지식 관리 시스템을 통해 분석된 내용을 정리한 문서입니다.
+                                    ### 1. 목적 (Purpose)
+                                    이 문서는 지식 관리 시스템을 통해 분석된 내용을 정리한 문서입니다.
 
-### 2. 원본 내용
-{analysis_result.get('original_content', '내용 없음')}
+                                    ### 2. 원본 내용
+                                    {analysis_result.get('original_content', '내용 없음')}
 
-### 3. 발견된 개선사항
-"""
+                                    ### 3. 발견된 개선사항
+                                    """
             for i, improvement in enumerate(analysis_result.get('improvements', []), 1):
                 fallback_content += f"{i}. {improvement}\n"
 
             fallback_content += """
-### 4. 적용 및 재사용 방안
-- 향후 유사한 프로젝트에서 참고 자료로 활용 가능
-- 개선사항을 반영하여 문서 품질 향상 필요
+                                ### 4. 적용 및 재사용 방안
+                                - 향후 유사한 프로젝트에서 참고 자료로 활용 가능
+                                - 개선사항을 반영하여 문서 품질 향상 필요
 
----
-*본 문서는 AI 지식관리 시스템에 의해 생성되었습니다.*
-"""
+                                ---
+                                *본 문서는 AI 지식관리 시스템에 의해 생성되었습니다.*
+                                """
 
             enhanced_document = {
                 "enhanced_content": fallback_content,

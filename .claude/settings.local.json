@@ -6,7 +6,8 @@
       "Bash(pip install:*)",
       "Bash(streamlit run:*)",
       "Bash(python:*)",
-      "mcp__sequential-thinking__sequentialthinking"
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(awk:*)"
     ],
     "deny": [],
     "ask": []

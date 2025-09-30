@@ -382,49 +382,94 @@ def knowledge_creation_page():
         st.subheader("🚀 지식 창출 실행")
 
         if st.button("🔬 Multi-Agent 지식 창출 시작", type="primary", key="start_creation"):
-            with st.spinner("Multi-Agent 지식 창출을 시작합니다..."):
-                try:
+            try:
+                # 진행 상황 컨테이너
+                with st.status("🚀 지식 창출 진행 중...", expanded=True) as status:
+                    st.write("📚 Multi-Agent 워크플로우 실행 중...")
+                    st.write("콘솔 출력을 확인하여 상세 진행 상황을 볼 수 있습니다.")
+
                     # LangGraph 엔진 실행
                     creation_engine = st.session_state.creation_engine
                     result = creation_engine.run(max_iter=max_iterations)
 
-                    # 디버깅: 결과 출력
-                    st.write("**디버그: 생성 결과**")
-                    st.write(f"- 반복 횟수: {result.get('iter', 0)}")
-                    st.write(f"- 샘플 수: {len(result.get('samples', []))}")
-                    st.write(f"- 요약 수: {len(result.get('summaries', []))}")
-                    st.write(f"- 제안 수: {len(result.get('proposals', []))}")
-                    st.write(f"- 검증 수: {len(result.get('verdicts', []))}")
-                    st.write(f"- K-Note 수: {len(result.get('knotes', []))}")
-                    st.write(f"- 점수: {result.get('scores', {})}")
-                    st.write(f"- 종료 이유: {result.get('stop_reason', 'unknown')}")
+                    status.update(label="✅ 지식 창출 완료!", state="complete", expanded=False)
 
-                    # 세션 상태 업데이트
-                    st.session_state.creation_state = {
-                        "current_stage": result.get("current_stage", "score"),
-                        "iteration": result.get("iter", max_iterations),
-                        "max_iterations": max_iterations,
-                        "stages_completed": result.get("stages_completed", []),
-                        "current_samples": [f"Sample_{i+1}" for i, s in enumerate(result.get("samples", []))],
-                        "summaries": [f"Summary_{i+1}" for i, s in enumerate(result.get("summaries", []))],
-                        "proposals": result.get("proposals", []),
-                        "verdicts": result.get("verdicts", []),
-                        "knotes": result.get("knotes", []),
-                        "scores": result.get("scores", {}),
-                        "stop_reason": result.get("stop_reason"),
-                        "is_running": False
-                    }
+                # 결과 요약
+                st.markdown("---")
+                st.markdown("### 📊 실행 결과 요약")
 
-                    if result.get("knotes"):
-                        st.success(f"✅ 지식 창출 완료! {len(result['knotes'])}개의 K-Note 생성됨")
-                    else:
-                        st.warning(f"⚠️ K-Note가 생성되지 않았습니다. 종료 이유: {result.get('stop_reason', 'unknown')}")
+                col1, col2, col3, col4 = st.columns(4)
 
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"지식 창출 중 오류 발생: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                with col1:
+                    st.metric("샘플 수", len(result.get('samples', [])))
+                with col2:
+                    st.metric("제안 수", len(result.get('proposals', [])))
+                with col3:
+                    accepted = sum(1 for v in result.get('verdicts', []) if v.get('verdict') == 'accept')
+                    st.metric("승인된 제안", f"{accepted}/{len(result.get('verdicts', []))}")
+                with col4:
+                    st.metric("K-Note 생성", len(result.get('knotes', [])))
+
+                # 품질 점수
+                if result.get('scores'):
+                    st.markdown("### 📈 품질 평가 점수")
+                    scores = result['scores']
+                    score_col1, score_col2, score_col3, score_col4 = st.columns(4)
+
+                    with score_col1:
+                        st.metric("신규성", f"{scores.get('novelty', 0):.2f}")
+                    with score_col2:
+                        st.metric("커버리지", f"{scores.get('coverage', 0):.2f}")
+                    with score_col3:
+                        st.metric("유용성", f"{scores.get('utility', 0):.2f}")
+                    with score_col4:
+                        import numpy as np
+                        avg = np.mean(list(scores.values()))
+                        st.metric("평균", f"{avg:.2f}")
+
+                # 세션 상태 업데이트
+                st.session_state.creation_state = {
+                    "current_stage": result.get("current_stage", "score"),
+                    "iteration": result.get("iter", max_iterations),
+                    "max_iterations": max_iterations,
+                    "stages_completed": result.get("stages_completed", []),
+                    "current_samples": [f"Sample_{i+1}" for i, s in enumerate(result.get("samples", []))],
+                    "summaries": [f"Summary_{i+1}" for i, s in enumerate(result.get("summaries", []))],
+                    "proposals": result.get("proposals", []),
+                    "verdicts": result.get("verdicts", []),
+                    "knotes": result.get("knotes", []),
+                    "scores": result.get("scores", {}),
+                    "stop_reason": result.get("stop_reason"),
+                    "is_running": False
+                }
+
+                if result.get("knotes"):
+                    st.success(f"✅ {len(result['knotes'])}개의 K-Note가 성공적으로 생성되었습니다!")
+
+                    # 생성된 K-Note 미리보기
+                    st.markdown("### 📝 생성된 K-Note")
+                    for idx, kn in enumerate(result['knotes'], 1):
+                        with st.expander(f"K-Note #{idx}: {kn.get('title', 'Untitled')}", expanded=(idx == 1)):
+                            st.markdown(f"**ID:** `{kn.get('k_note_id', 'N/A')}`")
+                            st.markdown(f"**상태:** {kn.get('status', 'N/A')}")
+                            st.markdown(f"**제안:**")
+                            st.write(kn.get('proposal', {}).get('statement', 'N/A'))
+
+                            if kn.get('evidence'):
+                                st.markdown(f"**근거 수:** {len(kn['evidence'])}개")
+
+                            if kn.get('recommended_experiments'):
+                                st.markdown(f"**실험 제안:**")
+                                for exp in kn['recommended_experiments'][:2]:
+                                    st.write(f"- {exp}")
+                else:
+                    st.warning(f"⚠️ K-Note가 생성되지 않았습니다. 종료 이유: {result.get('stop_reason', 'unknown')}")
+
+                st.rerun()
+            except Exception as e:
+                st.error(f"지식 창출 중 오류 발생: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
 
         # 프로세스 결과 요약 표시
         if 'creation_state' in st.session_state:

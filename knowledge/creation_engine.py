@@ -218,8 +218,13 @@ def diverse_select(
     dom_count[domains[seed]] = 1
     cand = set(range(n)) - set(S)
 
-    while len(S) < min(k, n) and cand:
+    attempts = 0
+    max_attempts = n * 3  # 무한 루프 방지
+
+    while len(S) < min(k, n) and cand and attempts < max_attempts:
+        attempts += 1
         scored: List[Tuple[float, int]] = []
+
         for i in list(cand):
             if dom_count.get(domains[i], 0) >= max_per_domain:
                 continue
@@ -228,23 +233,39 @@ def diverse_select(
             relevance = 0.5 * float(Q[i]) + 0.5 * float(R[i])
             score = lambda_div * diversity + (1 - lambda_div) * relevance
             scored.append((float(score), i))
+
         if not scored:
+            print(f"다양성 샘플링 조기 종료: 더 이상 후보가 없음 (선택됨: {len(S)}개)")
             break
+
         scored.sort(key=lambda x: x[0], reverse=True)
         chosen = scored[0][1]
         S.append(chosen)
         dom_count[domains[chosen]] = dom_count.get(domains[chosen], 0) + 1
         cand.remove(chosen)
 
-        # 평균 유사도 제약
-        sims = []
-        for a in range(len(S)):
-            for b in range(a + 1, len(S)):
-                sims.append(cosine(E[S[a]], E[S[b]]))
-        if sims and float(np.mean(sims)) > max_avg_sim:
-            dom_count[domains[chosen]] -= 1
-            S.pop()
-            continue
+        # 평균 유사도 제약 (더 관대하게 적용)
+        if len(S) >= 3:  # 최소 3개는 확보
+            sims = []
+            for a in range(len(S)):
+                for b in range(a + 1, len(S)):
+                    sims.append(cosine(E[S[a]], E[S[b]]))
+
+            avg_sim = float(np.mean(sims)) if sims else 0.0
+
+            # 유사도가 너무 높으면 제거 (하지만 최소 3개는 유지)
+            if avg_sim > max_avg_sim and len(S) > 3:
+                print(f"평균 유사도 {avg_sim:.3f} > {max_avg_sim}, 샘플 제거")
+                dom_count[domains[chosen]] -= 1
+                S.pop()
+                continue
+            elif avg_sim > max_avg_sim:
+                print(f"평균 유사도 {avg_sim:.3f} > {max_avg_sim}이지만 최소 개수 유지")
+
+    if attempts >= max_attempts:
+        print(f"경고: 최대 시도 횟수 도달 ({max_attempts}), 현재 선택: {len(S)}개")
+
+    print(f"다양성 샘플링 완료: {len(S)}개 선택 (목표: {k}개)")
     return S
 
 
@@ -390,7 +411,19 @@ def chroma_query_texts(collection, query_texts: List[str], top_k: int = 6) -> Li
     Chroma 벡터 검색 (RAG용)
     """
     try:
-        results = collection.similarity_search(" ".join(query_texts), k=top_k)
+        # query_texts를 문자열로 변환 (리스트나 다른 타입이 포함될 수 있음)
+        clean_texts = []
+        for item in query_texts:
+            if isinstance(item, str):
+                clean_texts.append(item)
+            elif isinstance(item, list):
+                # 리스트인 경우 문자열로 변환
+                clean_texts.extend([str(x) for x in item if x])
+            else:
+                clean_texts.append(str(item))
+
+        query_str = " ".join(clean_texts)
+        results = collection.similarity_search(query_str, k=top_k)
 
         out: List[Chunk] = []
         for doc in results:
@@ -410,6 +443,8 @@ def chroma_query_texts(collection, query_texts: List[str], top_k: int = 6) -> Li
 
     except Exception as e:
         print(f"Chroma query 오류: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
@@ -520,11 +555,15 @@ def node_sample(state: State) -> State:
 def node_summarize(state: State) -> State:
     """3단계: 구조화 요약 생성"""
     state["current_stage"] = "summarize"
+    print(f"\n=== [단계 3/8] 구조화 요약 생성 시작 ===")
+    print(f"샘플 수: {len(state['samples'])}개")
 
     llm = get_llm("summarizer", state["cfg_roles"])
     outs: List[Summary] = []
 
-    for c in state["samples"]:
+    for idx, c in enumerate(state["samples"], 1):
+        print(f"요약 생성 중 ({idx}/{len(state['samples'])}): {c['doc_id'][:20]}...")
+
         prompt = f"""
 아래 텍스트만 근거로 기술 문서 구조 요약(JSON) 생성.
 필드: problem, constraints[], approach, outcomes[], signals[], risks[].
@@ -545,8 +584,9 @@ JSON만 출력.
             s["doc_id"] = c["doc_id"]
             s["chunk_id"] = c["chunk_id"]
             outs.append(s)
+            print(f"  ✓ 요약 완료: problem='{s.get('problem', '')[:50]}...'")
         except Exception as e:
-            print(f"요약 실패: {e}")
+            print(f"  ✗ 요약 실패: {e}")
             # 기본 요약
             outs.append({
                 "doc_id": c["doc_id"],
@@ -559,6 +599,7 @@ JSON만 출력.
                 "risks": []
             })
 
+    print(f"=== 요약 단계 완료: {len(outs)}개 생성 ===\n")
     state["summaries"] = outs
     state["stages_completed"].append("summarize")
     return state
@@ -567,12 +608,14 @@ JSON만 출력.
 def node_expand_rag(state: State) -> State:
     """4단계: RAG 기반 컨텍스트 확장"""
     state["current_stage"] = "expand"
+    print(f"\n=== [단계 4/8] RAG 컨텍스트 확장 시작 ===")
+    print(f"요약 수: {len(state['summaries'])}개")
 
     col = state["chroma_collection"]
     top_k = state["cfg_services"]["rag"]["top_k"]
     expansions: Dict[str, List[Chunk]] = {}
 
-    for s in state["summaries"]:
+    for idx, s in enumerate(state["summaries"], 1):
         queries = []
         if s["problem"]:
             queries.append(s["problem"])
@@ -584,9 +627,12 @@ def node_expand_rag(state: State) -> State:
         if not queries:
             queries = ["general engineering patterns"]
 
+        print(f"RAG 검색 중 ({idx}/{len(state['summaries'])}): {len(queries)}개 쿼리")
         ctx = chroma_query_texts(col, queries, top_k=top_k)
         expansions[f"{s['doc_id']}::{s['chunk_id']}"] = ctx
+        print(f"  ✓ {len(ctx)}개 관련 문서 발견")
 
+    print(f"=== RAG 확장 완료: 총 {sum(len(v) for v in expansions.values())}개 컨텍스트 ===\n")
     state["expansions"] = expansions
     state["stages_completed"].append("expand")
     return state
@@ -595,12 +641,14 @@ def node_expand_rag(state: State) -> State:
 def node_synthesize(state: State) -> State:
     """5단계: 아날로지 기반 제안 생성"""
     state["current_stage"] = "synthesize"
+    print(f"\n=== [단계 5/8] 아날로지 기반 융합 제안 생성 시작 ===")
 
     llm = get_llm("synthesizer", state["cfg_roles"])
     props: List[Proposal] = []
 
     # 페어링
     pairs = list(zip(state["summaries"][::2], state["summaries"][1::2]))
+    print(f"요약 페어링: {len(pairs)}쌍 생성")
 
     for a, b in pairs:
         key_a = f"{a['doc_id']}::{a['chunk_id']}"
@@ -625,6 +673,7 @@ B_ctx={json.dumps(ctx_b_data, ensure_ascii=False)}
 - 각 제안: statement, applicability(when/when_not/assumptions), expected_effects, risks_limits, evidence[doc_id,chunk_id,quote,confidence], quick_experiment.
 - JSON 배열로만 출력.
 """
+        print(f"제안 생성 중 (페어 {len(props)//2 + 1}/{len(pairs)})")
         try:
             response = llm.invoke(prompt).content
             if "```json" in response:
@@ -635,10 +684,13 @@ B_ctx={json.dumps(ctx_b_data, ensure_ascii=False)}
                 json_str = response
 
             parsed = json.loads(json_str)
-            props.extend(parsed if isinstance(parsed, list) else [parsed])
+            new_props = parsed if isinstance(parsed, list) else [parsed]
+            props.extend(new_props)
+            print(f"  ✓ {len(new_props)}개 제안 생성")
         except Exception as e:
-            print(f"합성 실패: {e}")
+            print(f"  ✗ 합성 실패: {e}")
 
+    print(f"=== 융합 제안 완료: 총 {len(props)}개 제안 ===\n")
     state["proposals"] = props
     state["stages_completed"].append("synthesize")
     return state
@@ -647,19 +699,26 @@ B_ctx={json.dumps(ctx_b_data, ensure_ascii=False)}
 def node_verify(state: State) -> State:
     """6단계: 제안 검증"""
     state["current_stage"] = "verify"
+    print(f"\n=== [단계 6/8] 제안 검증 시작 ===")
+    print(f"제안 수: {len(state['proposals'])}개")
 
     llm = get_llm("verifier", state["cfg_roles"])
     col = state["chroma_collection"]
     verdicts: List[Verdict] = []
 
-    for p in state["proposals"]:
+    for idx, p in enumerate(state["proposals"], 1):
+        print(f"검증 중 ({idx}/{len(state['proposals'])}): {p.get('statement', '')[:50]}...")
         q = [p["statement"]] + p["applicability"].get("assumptions", [])[:1]
         counter_ctx = chroma_query_texts(col, q, top_k=3)
+        print(f"  - 반례 검색: {len(counter_ctx)}개 문서 조회")
+
+        # 반례 데이터를 미리 계산
+        counter_data = [{'text': c['text'][:200]} for c in counter_ctx]
 
         prompt = f"""
 [역할] 검증자
 proposal={json.dumps(p, ensure_ascii=False)}
-counter_evidence={json.dumps([{{'text': c['text'][:200]}} for c in counter_ctx], ensure_ascii=False)}
+counter_evidence={json.dumps(counter_data, ensure_ascii=False)}
 
 [지시]
 - 반례/편향/외삽 위험 평가.
@@ -675,10 +734,17 @@ counter_evidence={json.dumps([{{'text': c['text'][:200]}} for c in counter_ctx],
             else:
                 json_str = response
 
-            verdicts.append(json.loads(json_str))
+            verdict = json.loads(json_str)
+            verdicts.append(verdict)
+            print(f"  ✓ 검증 결과: {verdict.get('verdict', 'unknown')}")
+            if verdict.get("reasons"):
+                print(f"    사유: {verdict['reasons'][0][:80]}...")
         except Exception as e:
-            print(f"검증 실패: {e}")
+            print(f"  ✗ 검증 실패: {e}")
             verdicts.append({"verdict": "reject", "reasons": ["검증 오류"], "added_evidence": []})
+
+    accept_count = sum(1 for v in verdicts if v.get("verdict") == "accept")
+    print(f"=== 검증 완료: {accept_count}/{len(verdicts)}개 승인 ===\n")
 
     state["verdicts"] = verdicts
     state["stages_completed"].append("verify")
@@ -688,13 +754,17 @@ counter_evidence={json.dumps([{{'text': c['text'][:200]}} for c in counter_ctx],
 def node_productize(state: State) -> State:
     """7단계: K-Note 생성"""
     state["current_stage"] = "productize"
+    print(f"\n=== [단계 7/8] K-Note 생성 시작 ===")
 
     llm = get_llm("productizer", state["cfg_roles"])
     kns: List[KNote] = []
 
-    for p, v in zip(state["proposals"], state["verdicts"]):
-        if v["verdict"] != "accept":
-            continue
+    accepted_proposals = [(p, v) for p, v in zip(state["proposals"], state["verdicts"])
+                          if v["verdict"] == "accept"]
+    print(f"승인된 제안 수: {len(accepted_proposals)}개")
+
+    for idx, (p, v) in enumerate(accepted_proposals, 1):
+        print(f"K-Note 생성 중 ({idx}/{len(accepted_proposals)}): {p.get('statement', '')[:50]}...")
 
         prompt = f"""
 아래 proposal을 K-Note 스키마로 변환해 JSON만 출력.
@@ -714,8 +784,11 @@ proposal={json.dumps(p, ensure_ascii=False)}
             kn["k_note_id"] = kn.get("k_note_id") or f"KN-{hash_text(p['statement'])[:8]}"
             kn["status"] = kn.get("status") or "validated"
             kns.append(kn)
+            print(f"  ✓ K-Note 생성 완료: {kn.get('title', 'Untitled')[:60]}")
         except Exception as e:
-            print(f"K-Note 생성 실패: {e}")
+            print(f"  ✗ K-Note 생성 실패: {e}")
+
+    print(f"=== K-Note 생성 완료: 총 {len(kns)}개 ===\n")
 
     state["knotes"] = state.get("knotes", []) + kns
     state["stages_completed"].append("productize")
@@ -725,6 +798,7 @@ proposal={json.dumps(p, ensure_ascii=False)}
 def node_score(state: State) -> State:
     """8단계: 평가"""
     state["current_stage"] = "score"
+    print(f"\n=== [단계 8/8] 품질 평가 시작 ===")
 
     # 간단 점수 (실제로는 임베딩 기반 신규성/커버리지 평가 가능)
     import random
@@ -733,6 +807,15 @@ def node_score(state: State) -> State:
         "coverage": round(random.uniform(0.6, 0.9), 2),
         "utility": round(random.uniform(0.6, 0.9), 2)
     }
+
+    avg_score = np.mean(list(state["scores"].values()))
+    print(f"평가 점수:")
+    print(f"  - 신규성 (novelty): {state['scores']['novelty']}")
+    print(f"  - 커버리지 (coverage): {state['scores']['coverage']}")
+    print(f"  - 유용성 (utility): {state['scores']['utility']}")
+    print(f"  - 평균: {avg_score:.2f}")
+    print(f"=== 품질 평가 완료 ===\n")
+
     state["stages_completed"].append("score")
     return state
 

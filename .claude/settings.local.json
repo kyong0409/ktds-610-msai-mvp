@@ -5,7 +5,8 @@
       "Bash(tree:*)",
       "Bash(pip install:*)",
       "Bash(streamlit run:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "mcp__sequential-thinking__sequentialthinking"
     ],
     "deny": [],
     "ask": []

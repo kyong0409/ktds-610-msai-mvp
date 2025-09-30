@@ -5,6 +5,15 @@ import os
 import tempfile
 from typing import Optional, Tuple
 from config.settings import get_config
+from dotenv import load_dotenv
+from azure.storage.blob import BlobServiceClient
+import streamlit as st
+
+load_dotenv()
+
+AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+AZURE_STORAGE_ORIGINAL_CONTAINER_NAME = os.getenv("AZURE_STORAGE_ORIGINAL_CONTAINER_NAME")
+AZURE_STORAGE_ENHANCED_CONTAINER_NAME = os.getenv("AZURE_STORAGE_ENHANCED_CONTAINER_NAME")
 
 class FileProcessor:
     """파일 처리 클래스"""
@@ -48,44 +57,6 @@ class FileProcessor:
         except Exception as e:
             return f"파일 읽기 오류: {str(e)}"
 
-    def _extract_from_pdf(self, file) -> str:
-        """PDF 파일에서 텍스트 추출"""
-        # TODO: PyPDF2 또는 pdfplumber 사용
-        # import PyPDF2
-        # reader = PyPDF2.PdfReader(file)
-        # text = ""
-        # for page in reader.pages:
-        #     text += page.extract_text()
-        # return text
-
-        return f"[PDF 시뮬레이션] {file.name} 파일의 내용입니다."
-
-    def _extract_from_docx(self, file) -> str:
-        """DOCX 파일에서 텍스트 추출"""
-        # TODO: python-docx 사용
-        # import docx
-        # doc = docx.Document(file)
-        # text = ""
-        # for paragraph in doc.paragraphs:
-        #     text += paragraph.text + "\n"
-        # return text
-
-        return f"[DOCX 시뮬레이션] {file.name} 파일의 내용입니다."
-
-    def _extract_from_pptx(self, file) -> str:
-        """PPTX 파일에서 텍스트 추출"""
-        # TODO: python-pptx 사용
-        # import pptx
-        # presentation = pptx.Presentation(file)
-        # text = ""
-        # for slide in presentation.slides:
-        #     for shape in slide.shapes:
-        #         if hasattr(shape, "text"):
-        #             text += shape.text + "\n"
-        # return text
-
-        return f"[PPTX 시뮬레이션] {file.name} 파일의 내용입니다."
-
     def save_temp_file(self, file) -> str:
         """임시 파일로 저장"""
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
@@ -100,3 +71,24 @@ class FileProcessor:
             "type": file.type,
             "extension": os.path.splitext(file.name)[1].lower()
         }
+
+    def upload_file(self, file, upload_type: str) -> str:
+        """파일 업로드"""
+
+        if file is not None:
+            
+            try:
+                blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+
+                azure_storage_container = AZURE_STORAGE_ORIGINAL_CONTAINER_NAME if upload_type == "original" else AZURE_STORAGE_ENHANCED_CONTAINER_NAME
+
+                container_client = blob_service_client.get_container_client(container=azure_storage_container) 
+
+                blob_client = container_client.get_blob_client(file.name)
+
+                blob_client.upload_blob(file, overwrite=True)
+
+                st.success(f"{file.name} 파일이 {azure_storage_container} 컨테이너에 업로드되었습니다.")
+            
+            except Exception as e:
+                st.error(f"파일 업로드 실패: {str(e)}")

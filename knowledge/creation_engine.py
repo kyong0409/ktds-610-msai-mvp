@@ -825,18 +825,29 @@ def should_continue(state: State) -> str:
     s = state.get("scores", {})
     avg = np.mean([s.get("novelty", 0), s.get("coverage", 0), s.get("utility", 0)])
 
+    print(f"=== 반복 조건 평가: 평균 점수={avg:.2f} ===")
+
     if avg >= 0.75:
         state["stop_reason"] = f"score_threshold({avg:.2f})"
         state["is_running"] = False
+        print(f"점수 기준으로 중단: {avg:.2f}")
         return "stop"
 
-    if state.get("iter", 0) >= state.get("max_iter", 3):
+    # iter 카운터 증가를 먼저 수행
+    current_iter = state.get("iter", 0) + 1
+    state["iter"] = current_iter
+    max_iter = state.get("max_iter", 3)
+    
+    print(f"반복 횟수: {current_iter}/{max_iter}")
+    
+    if current_iter >= max_iter:
         state["stop_reason"] = "max_iter"
         state["is_running"] = False
+        print(f"최대 반복 횟수 도달로 중단: {current_iter}/{max_iter}")
         return "stop"
 
-    state["iter"] = state.get("iter", 0) + 1
     state["stages_completed"] = ["normalize"]  # 일부 단계 유지
+    print(f"다음 반복 계속 (반복 {current_iter})")
     return "continue"
 
 
@@ -905,7 +916,7 @@ class KnowledgeCreationEngine:
             "is_running": True
         }
 
-        # 그래프 실행
-        result = self.graph.invoke(initial_state)
+        # 그래프 실행 (recursion_limit 설정)
+        result = self.graph.invoke(initial_state, config={"recursion_limit": 100})
 
         return result

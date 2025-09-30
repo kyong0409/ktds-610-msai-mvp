@@ -601,27 +601,30 @@ def show_creation_results():
                         st.write(proposal)
 
                         # 적용 가능성
-                        if "applicability" in knote:
+                        if "applicability" in knote and isinstance(knote["applicability"], dict):
                             st.markdown("### 🎯 적용 가능성")
                             applicability = knote["applicability"]
-                            if "when" in applicability:
-                                st.write(f"**적용 시기:** {', '.join(applicability['when'])}")
-                            if "when_not" in applicability:
-                                st.write(f"**적용 제외:** {', '.join(applicability['when_not'])}")
+                            if "when" in applicability and isinstance(applicability['when'], list):
+                                st.write(f"**적용 시기:** {', '.join(str(x) for x in applicability['when'])}")
+                            if "when_not" in applicability and isinstance(applicability['when_not'], list):
+                                st.write(f"**적용 제외:** {', '.join(str(x) for x in applicability['when_not'])}")
 
                         # 근거 문서
-                        if evidence:
+                        if evidence and isinstance(evidence, list):
                             st.markdown("### 📚 근거 문서")
                             for ev in evidence[:3]:
-                                doc_id = ev.get("doc_id", "unknown")
-                                confidence = ev.get("confidence", 0)
-                                st.write(f"- 문서: {doc_id} (신뢰도: {confidence})")
+                                if isinstance(ev, dict):
+                                    doc_id = ev.get("doc_id", "unknown")
+                                    confidence = ev.get("confidence", 0)
+                                    st.write(f"- 문서: {doc_id} (신뢰도: {confidence})")
+                                else:
+                                    st.write(f"- {str(ev)}")
 
                         # 위험 및 제한사항
-                        if "risks_limits" in knote and knote["risks_limits"]:
+                        if "risks_limits" in knote and isinstance(knote["risks_limits"], list) and knote["risks_limits"]:
                             st.markdown("### ⚠️ 위험 및 제한사항")
                             for risk in knote["risks_limits"]:
-                                st.write(f"- {risk}")
+                                st.write(f"- {str(risk)}")
 
                         # 액션 버튼
                         col_action1, col_action2 = st.columns(2)

@@ -476,8 +476,12 @@ class KnowledgeService:
         # 위험 및 한계 추가
         risks_limits = knote_json.get("risks_limits", [])
         if risks_limits:
-            for risk in risks_limits[:5]:
-                fallback_content += f"- {risk}\n"
+            # 안전한 리스트 처리
+            if isinstance(risks_limits, list):
+                for risk in risks_limits[:5]:
+                    fallback_content += f"- {str(risk)}\n"
+            else:
+                fallback_content += f"- {str(risks_limits)}\n"
         else:
             fallback_content += "한계사항은 원본 K-Note를 참조하세요.\n"
 
@@ -489,11 +493,15 @@ class KnowledgeService:
         experiments = knote_json.get("recommended_experiments", [])
         if experiments:
             fallback_content += "권장 실험/적용 절차:\n"
-            for exp in experiments[:3]:
-                if isinstance(exp, dict):
-                    fallback_content += f"- {exp.get('description', str(exp))}\n"
-                else:
-                    fallback_content += f"- {str(exp)}\n"
+            # 안전한 리스트 처리
+            if isinstance(experiments, list):
+                for exp in experiments[:3]:
+                    if isinstance(exp, dict):
+                        fallback_content += f"- {exp.get('description', str(exp))}\n"
+                    else:
+                        fallback_content += f"- {str(exp)}\n"
+            else:
+                fallback_content += f"- {str(experiments)}\n"
         else:
             fallback_content += "재사용 방안은 원본 K-Note를 참조하세요.\n"
 
@@ -504,13 +512,19 @@ class KnowledgeService:
         # Evidence 추가
         evidence_list = knote_json.get("evidence", [])
         if evidence_list:
-            for i, evidence in enumerate(evidence_list[:5], 1):
-                if isinstance(evidence, dict):
-                    doc_id = evidence.get("doc_id", "unknown")
-                    chunk_id = evidence.get("chunk_id", "unknown")
-                    quote = evidence.get("quote", "내용 없음")
-                    confidence = evidence.get("confidence", 0)
-                    fallback_content += f"{i}. [{doc_id}#{chunk_id}] \"{quote[:100]}...\" (confidence: {confidence:.2f})\n"
+            # 안전한 리스트 처리
+            if isinstance(evidence_list, list):
+                for i, evidence in enumerate(evidence_list[:5], 1):
+                    if isinstance(evidence, dict):
+                        doc_id = evidence.get("doc_id", "unknown")
+                        chunk_id = evidence.get("chunk_id", "unknown")
+                        quote = evidence.get("quote", "내용 없음")
+                        confidence = evidence.get("confidence", 0)
+                        fallback_content += f"{i}. [{doc_id}#{chunk_id}] \"{quote[:100]}...\" (confidence: {confidence:.2f})\n"
+                    else:
+                        fallback_content += f"{i}. {str(evidence)}\n"
+            else:
+                fallback_content += f"1. {str(evidence_list)}\n"
         else:
             fallback_content += "추가 출처 필요\n"
 

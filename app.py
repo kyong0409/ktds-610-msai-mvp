@@ -771,10 +771,19 @@ def show_creation_results():
                                 if st.button(f"🔄 문서 구체화", key=f"enhance_knote_{i}", type="primary", use_container_width=True):
                                     with st.spinner("K-Note를 표준 문서로 구체화하는 중..."):
                                         try:
-                                            # 디버깅: K-Note 타입 확인
-                                            if not isinstance(knote, dict):
+                                            # 디버깅: K-Note 타입 및 내용 확인
+                                            st.write("🔍 디버깅 정보:")
+                                            st.write(f"- K-Note 타입: {type(knote)}")
+                                            st.write(f"- K-Note가 딕셔너리인가: {isinstance(knote, dict)}")
+                                            
+                                            if isinstance(knote, dict):
+                                                st.write(f"- K-Note 키들: {list(knote.keys())}")
+                                                # 각 필드의 타입 확인
+                                                for key, value in knote.items():
+                                                    st.write(f"  - {key}: {type(value)} = {str(value)[:100]}...")
+                                            else:
                                                 st.error(f"K-Note 타입 오류: 딕셔너리가 아닌 {type(knote)} 타입입니다.")
-                                                st.write("K-Note 내용:", knote)
+                                                st.write("K-Note 내용:", str(knote)[:500])
                                                 return
                                             
                                             knowledge_service = st.session_state.knowledge_service

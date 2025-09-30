@@ -96,7 +96,7 @@ class KnowledgeService:
                 tmp_file_path = tmp_file.name
 
             # MarkItDown으로 변환
-            result = self.markitdown.convert(tmp_file_path)
+            result = self.markitdown.convert(tmp_file_path, keep_data_uris=True)
 
             # 임시 파일 삭제
             os.unlink(tmp_file_path)

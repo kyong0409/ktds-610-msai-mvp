@@ -6,7 +6,6 @@ import time
 from datetime import datetime
 from typing import Dict, Any, Tuple, Optional
 from utils.file_processor import FileProcessor
-from services.document_analyzer import DocumentAnalyzer
 from markitdown import MarkItDown
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from dotenv import load_dotenv
@@ -64,7 +63,6 @@ class KnowledgeService:
 
     def __init__(self):
         self.file_processor = FileProcessor()
-        self.document_analyzer = DocumentAnalyzer()
         self.markitdown = MarkItDown(docintel_endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT, docintel_credential=key)
 
     def process_uploaded_file(self, uploaded_file) -> Tuple[Optional[Dict], Optional[str]]:
@@ -279,7 +277,6 @@ class KnowledgeService:
         except Exception as e:
             # LLM 분석 실패시 기존 DocumentAnalyzer로 fallback
             print(f"LLM 분석 실패 (네트워크 오류 또는 파싱 실패), fallback 사용: {e}")
-            return self._fallback_analysis(content, filename, str(e))
 
     def _create_enhanced_content(self, original_content: str, llm_result: Dict) -> str:
         """LLM 분석 결과를 기반으로 향상된 콘텐츠 생성"""

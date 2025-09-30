@@ -6,8 +6,7 @@ import os
 import tempfile
 from typing import List, Dict
 from knowledge.service import KnowledgeService, RAGService
-from knowledge.creation_engine import KnowledgeCreationEngine
-from chatbot.service import ChatbotService
+from knowledge_creation.creation_engine import KnowledgeCreationEngine
 from board.service import BoardService
 
 # Streamlit 페이지 설정
@@ -24,7 +23,6 @@ def sidebar_navigation():
     st.sidebar.markdown("---")
 
     pages = {
-        "챗봇": "💬",
         "지식등록": "📚",
         "게시판": "📋",
         "지식창출": "🔬"
@@ -51,8 +49,6 @@ def initialize_session_state():
         st.session_state.vector_db = []
     if 'knowledge_service' not in st.session_state:
         st.session_state.knowledge_service = KnowledgeService()
-    if 'chatbot_service' not in st.session_state:
-        st.session_state.chatbot_service = ChatbotService()
     if 'board_service' not in st.session_state:
         st.session_state.board_service = BoardService()
     if 'rag_service' not in st.session_state:
@@ -60,40 +56,6 @@ def initialize_session_state():
     if 'creation_engine' not in st.session_state:
         st.session_state.creation_engine = KnowledgeCreationEngine()
 
-
-# 챗봇 화면
-def chatbot_page():
-    st.title("💬 AI 챗봇")
-    st.markdown("저장된 지식을 바탕으로 질문에 답변드립니다.")
-
-    # 채팅 히스토리 표시
-    chat_container = st.container()
-
-    with chat_container:
-        for i, message in enumerate(st.session_state.chat_history):
-            if message["role"] == "user":
-                st.chat_message("user").write(message["content"])
-            else:
-                st.chat_message("assistant").write(message["content"])
-
-    # 채팅 입력
-    if prompt := st.chat_input("질문을 입력하세요..."):
-        # 사용자 메시지 추가
-        st.session_state.chat_history.append({"role": "user", "content": prompt})
-
-        # AI 응답 시뮬레이션
-        with st.chat_message("user"):
-            st.write(prompt)
-
-        with st.chat_message("assistant"):
-            # 응답 생성 시뮬레이션
-            if st.session_state.vector_db:
-                response = f"저장된 지식을 바탕으로 답변드리겠습니다.\n\n'{prompt}'에 대한 답변:\n\n현재 {len(st.session_state.vector_db)}개의 문서가 데이터베이스에 저장되어 있으며, 관련 정보를 검색하여 답변을 생성했습니다."
-            else:
-                response = "아직 저장된 지식이 없습니다. 지식등록 메뉴에서 문서를 업로드해주세요."
-
-            st.write(response)
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
 
 # 지식등록 화면
 def knowledge_registration_page():
@@ -405,14 +367,6 @@ def knowledge_creation_page():
                     # 진행 상황을 표시할 placeholder
                     log_container = st.container()
 
-                    with log_container:
-                        st.write("📚 **Multi-Agent 워크플로우 실행 중...**")
-                        st.write("")
-
-                        # 단계별 진행 표시
-                        for stage, name in stage_names.items():
-                            st.write(f"⏳ {name}")
-
                     # 세션 상태 초기화
                     if 'creation_state' not in st.session_state:
                         st.session_state.creation_state = {}
@@ -555,71 +509,6 @@ def knowledge_creation_page():
         if 'creation_state' in st.session_state:
             st.markdown("---")
             show_process_summary()
-
-    with col_main2:
-        # 실시간 모니터링 패널
-        st.subheader("📈 실시간 모니터링")
-
-        if 'creation_state' in st.session_state and st.session_state.creation_state:
-            creation_state = st.session_state.creation_state
-
-            # 진행률 표시
-            stages = ["normalize", "sample", "summarize", "expand", "synthesize", "verify", "productize", "score"]
-            stage_names = {
-                "normalize": "📚 데이터 정규화",
-                "sample": "🎲 다양성 샘플링",
-                "summarize": "📝 구조화 요약",
-                "expand": "🔍 RAG 컨텍스트 확장",
-                "synthesize": "🧬 아날로지 제안 생성",
-                "verify": "✅ 제안 검증",
-                "productize": "📋 K-Note 생성",
-                "score": "📊 품질 평가"
-            }
-
-            # 현재 단계 인덱스 계산
-            current_stage = creation_state.get("current_stage", "normalize")
-            if current_stage in stages:
-                current_stage_idx = stages.index(current_stage)
-                progress = (current_stage_idx + 1) / len(stages)
-            else:
-                progress = 0.0
-
-            st.progress(progress)
-            st.write(f"**현재 단계:** {stage_names.get(current_stage, current_stage)}")
-            st.write(f"**반복:** {creation_state.get('iteration', 0)}/{creation_state.get('max_iterations', 3)}")
-
-            # 단계별 상태
-            st.markdown("---")
-            st.write("**단계별 진행 상황:**")
-
-            for i, stage in enumerate(stages):
-                stage_display = stage_names.get(stage, stage.title())
-
-                if stage in creation_state.get('stages_completed', []):
-                    st.markdown(f"✅ **{stage_display}**")
-                elif stage == current_stage:
-                    st.markdown(f"🔄 **{stage_display}** _(진행중)_")
-                else:
-                    st.markdown(f"⏳ {stage_display}")
-
-            # 통계 정보
-            if creation_state.get('current_samples') or creation_state.get('proposals') or creation_state.get('knotes'):
-                st.markdown("---")
-                st.write("**중간 결과:**")
-
-                if creation_state.get('current_samples'):
-                    st.write(f"• 샘플: {len(creation_state['current_samples'])}개")
-                if creation_state.get('summaries'):
-                    st.write(f"• 요약: {len(creation_state['summaries'])}개")
-                if creation_state.get('proposals'):
-                    st.write(f"• 제안: {len(creation_state['proposals'])}개")
-                if creation_state.get('verdicts'):
-                    accepted = sum(1 for v in creation_state['verdicts'] if v.get('verdict') == 'accept')
-                    st.write(f"• 승인된 제안: {accepted}/{len(creation_state['verdicts'])}개")
-                if creation_state.get('knotes'):
-                    st.write(f"• K-Note: {len(creation_state['knotes'])}개")
-        else:
-            st.info("지식 창출을 시작하면 실시간 모니터링이 표시됩니다.")
 
     # 결과 표시 영역
     if 'creation_state' in st.session_state:
@@ -766,9 +655,7 @@ def main():
     selected_page = sidebar_navigation()
 
     # 페이지 라우팅
-    if selected_page == "챗봇":
-        chatbot_page()
-    elif selected_page == "지식등록":
+    if selected_page == "지식등록":
         knowledge_registration_page()
     elif selected_page == "게시판":
         board_page()

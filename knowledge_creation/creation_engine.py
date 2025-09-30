@@ -853,8 +853,9 @@ def node_productize(state: State) -> State:
     llm = get_llm("productizer", state["cfg_roles"])
     kns: List[KNote] = []
 
+    # 안전한 verdict 체크
     accepted_proposals = [(p, v) for p, v in zip(state["proposals"], state["verdicts"])
-                          if v["verdict"] == "accept"]
+                          if v.get("verdict") == "accept"]
     log_to_streamlit(state, f"📋 [7/8] K-Note 생성 시작 (승인된 제안: {len(accepted_proposals)}개)", "info")
 
     for idx, (p, v) in enumerate(accepted_proposals, 1):
@@ -919,29 +920,30 @@ def should_continue(state: State) -> str:
     # 사용자 설정 품질 임계값 사용
     quality_threshold = state.get("quality_threshold", 0.75)
 
-    log_to_streamlit(state, f"🔄 반복 조건 평가: 평균 점수={avg:.2f}, 임계값={quality_threshold:.2f}", "info")
+    # 현재 반복 횟수 (아직 증가시키지 않음)
+    current_iter = state.get("iter", 0)
+    max_iter = state.get("max_iter", 3)
 
+    log_to_streamlit(state, f"🔄 반복 조건 평가: 반복={current_iter + 1}/{max_iter}, 평균 점수={avg:.2f}, 임계값={quality_threshold:.2f}", "info")
+
+    # 품질 임계값 달성 체크
     if avg >= quality_threshold:
         state["stop_reason"] = f"score_threshold({avg:.2f}>={quality_threshold:.2f})"
         state["is_running"] = False
-        log_to_streamlit(state, f"✅ 품질 임계값 달성으로 완료: {avg:.2f}>={quality_threshold:.2f}", "success")
+        log_to_streamlit(state, f"✅ 품질 임계값 달성으로 완료: {avg:.2f}>={quality_threshold:.2f} (반복 {current_iter + 1}회)", "success")
         return "stop"
 
-    # iter 카운터 증가를 먼저 수행
-    current_iter = state.get("iter", 0) + 1
-    state["iter"] = current_iter
-    max_iter = state.get("max_iter", 3)
-
-    log_to_streamlit(state, f"🔄 반복 {current_iter}/{max_iter}", "info")
-
-    if current_iter >= max_iter:
+    # 최대 반복 횟수 체크 (iter는 0부터 시작하므로 iter + 1이 실제 반복 횟수)
+    if current_iter + 1 >= max_iter:
         state["stop_reason"] = "max_iter"
         state["is_running"] = False
-        log_to_streamlit(state, f"✅ 최대 반복 횟수 도달로 완료: {current_iter}/{max_iter}", "success")
+        log_to_streamlit(state, f"✅ 최대 반복 횟수 도달로 완료: {current_iter + 1}/{max_iter}", "success")
         return "stop"
 
+    # 다음 반복 계속
+    state["iter"] = current_iter + 1
     state["stages_completed"] = ["normalize"]  # 일부 단계 유지
-    log_to_streamlit(state, f"🔄 다음 반복 계속 (반복 {current_iter})", "info")
+    log_to_streamlit(state, f"🔄 다음 반복 계속 (반복 {current_iter + 2}/{max_iter})", "info")
     return "continue"
 
 

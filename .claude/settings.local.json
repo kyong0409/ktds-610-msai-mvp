@@ -4,7 +4,8 @@
       "Bash(mkdir:*)",
       "Bash(tree:*)",
       "Bash(pip install:*)",
-      "Bash(streamlit run:*)"
+      "Bash(streamlit run:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

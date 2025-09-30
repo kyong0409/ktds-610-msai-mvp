@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 import tempfile
 from typing import List, Dict
-from knowledge.service import KnowledgeService
+from knowledge.service import KnowledgeService, RAGService
 from chatbot.service import ChatbotService
 from board.service import BoardService
 
@@ -54,6 +54,8 @@ def initialize_session_state():
         st.session_state.chatbot_service = ChatbotService()
     if 'board_service' not in st.session_state:
         st.session_state.board_service = BoardService()
+    if 'rag_service' not in st.session_state:
+        st.session_state.rag_service = RAGService()
 
 
 # 챗봇 화면
@@ -116,13 +118,14 @@ def knowledge_registration_page():
                 if 'current_file_content' in st.session_state:
                     del st.session_state.current_file_content
 
-            # MarkItDown을 사용한 파일 미리보기
+            # MarkItDown을 사용한 파일 전체 내용 표시
             knowledge_service = st.session_state.knowledge_service
 
             with st.spinner("파일 내용을 변환하는 중..."):
-                preview_content = knowledge_service.get_file_preview(uploaded_file)
+                success, full_content = knowledge_service.convert_file_to_text(uploaded_file)
+                display_content = full_content if success else "파일 변환 실패"
 
-            st.text_area("📄 파일 미리보기", preview_content, height=200)
+            st.text_area("📄 파일 내용", display_content, height=400)
 
             # 전체 변환된 내용을 세션에 저장 (분석용)
             if 'current_file_content' not in st.session_state:
@@ -224,14 +227,13 @@ def knowledge_registration_page():
                 if st.button("💾 VectorDB & 게시판에 저장", type="primary", key="save_all"):
                     with st.spinner("VectorDB와 게시판에 저장하고 있습니다..."):
                         # 서비스 클래스 인스턴스 가져오기
-                        chatbot_service = st.session_state.chatbot_service
-                        board_service = st.session_state.board_service
+                        rag_service = st.session_state.rag_service
                         knowledge_service = st.session_state.knowledge_service
 
                         # Azure Blob Storage에 파일 업로드
                         # 1. 원본 파일 업로드
                         uploaded_file.seek(0)  # 파일 포인터 리셋
-                        knowledge_service.file_processor.upload_file(uploaded_file, "original")
+                        original_url = knowledge_service.file_processor.upload_file(uploaded_file, "original")
 
                         # 2. 보완된 문서 업로드 ({원본파일명}_enhanced.md)
                         import io
@@ -242,18 +244,32 @@ def knowledge_registration_page():
                         # 보완 문서를 파일 형태로 변환
                         enhanced_file = io.BytesIO(enhanced_content.encode('utf-8'))
                         enhanced_file.name = enhanced_filename
-                        knowledge_service.file_processor.upload_file(enhanced_file, "enhanced")
+                        enhanced_url = knowledge_service.file_processor.upload_file(enhanced_file, "enhanced")
 
-                        # VectorDB 저장
-                        vector_result = chatbot_service.save_to_vector_db(
-                            st.session_state.enhanced_document,
-                            uploaded_file.name
+                        # RAGService로 VectorDB에 임베딩 및 저장
+                        vector_result = rag_service.embed_and_store(
+                            text=enhanced_content,
+                            metadata={
+                                "filename": uploaded_file.name,
+                                "enhanced_filename": enhanced_filename,
+                                "original_url": original_url,
+                                "enhanced_url": enhanced_url,
+                                "quality_score": st.session_state.enhanced_document.get('quality_score', 0)
+                            },
+                            split_type="recursive"
                         )
 
-                        # 게시판 저장
-                        board_result = board_service.save_enhanced_document_to_board(
-                            st.session_state.enhanced_document,
-                            uploaded_file.name
+                        # RAGService로 게시판 DB에 저장
+                        board_result = rag_service.save_to_board_db(
+                            title=f"[AI 보완] {uploaded_file.name}",
+                            content=enhanced_content,
+                            enhanced_doc_url=enhanced_url,
+                            original_doc_url=original_url,
+                            quality_score=st.session_state.enhanced_document.get('quality_score', 0),
+                            metadata={
+                                "filename": uploaded_file.name,
+                                "generation_metadata": st.session_state.enhanced_document.get('generation_metadata', {})
+                            }
                         )
 
                         # 결과 표시
@@ -261,13 +277,13 @@ def knowledge_registration_page():
 
                         with col_result1:
                             if vector_result['success']:
-                                st.success(f"✅ {vector_result['message']} (총 {vector_result['count']}개)")
+                                st.success(f"✅ {vector_result['message']} ({vector_result['chunk_count']}개 청크)")
                             else:
                                 st.warning(f"⚠️ VectorDB: {vector_result['message']}")
 
                         with col_result2:
                             if board_result['success']:
-                                st.success(f"✅ {board_result['message']} (총 {board_result['count']}개)")
+                                st.success(f"✅ {board_result['message']}")
                             else:
                                 st.warning(f"⚠️ 게시판: {board_result['message']}")
 
@@ -280,29 +296,46 @@ def board_page():
     st.title("📋 지식 게시판")
     st.markdown("AI가 분석하고 보완한 지식들을 확인할 수 있습니다.")
 
-    if not st.session_state.board_posts:
+    # RAGService에서 게시글 가져오기
+    rag_service = st.session_state.rag_service
+    board_posts = rag_service.get_board_posts(limit=100)
+
+    if not board_posts:
         st.info("아직 등록된 게시글이 없습니다. 지식등록 메뉴에서 문서를 업로드해주세요.")
         return
 
     # 게시글 목록
-    st.subheader(f"📚 총 {len(st.session_state.board_posts)}개의 지식이 등록되었습니다")
+    st.subheader(f"📚 총 {len(board_posts)}개의 지식이 등록되었습니다")
 
-    for i, post in enumerate(reversed(st.session_state.board_posts)):
+    for i, post in enumerate(board_posts):
         with st.expander(f"📄 {post['title']} (품질점수: {post['quality_score']}점)"):
             col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
             with col1:
                 st.write(f"**작성자:** {post['author']}")
             with col2:
-                st.write(f"**등록일:** {post['timestamp'].strftime('%Y-%m-%d')}")
+                st.write(f"**등록일:** {post['created_at'][:10]}")
             with col3:
                 st.write(f"**조회수:** {post['views']}")
             with col4:
                 if st.button("조회", key=f"view_{i}"):
-                    post['views'] += 1
+                    # 조회수 증가 (get_board_post_by_id가 자동으로 처리)
+                    rag_service.get_board_post_by_id(post['id'])
                     st.rerun()
 
             st.markdown("---")
+
+            # 다운로드 링크가 있으면 표시
+            if post.get('enhanced_doc_url') or post.get('original_doc_url'):
+                col_link1, col_link2 = st.columns(2)
+                with col_link1:
+                    if post.get('original_doc_url'):
+                        st.markdown(f"[📥 원본 문서 다운로드]({post['original_doc_url']})")
+                with col_link2:
+                    if post.get('enhanced_doc_url'):
+                        st.markdown(f"[📥 보완 문서 다운로드]({post['enhanced_doc_url']})")
+                st.markdown("---")
+
             st.text_area("내용", post['content'], height=200, key=f"content_{i}")
 
 # 지식창출 화면

@@ -14,6 +14,16 @@ import os
 from azure.core.credentials import AzureKeyCredential
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain.text_splitter import (
+    CharacterTextSplitter,
+    RecursiveCharacterTextSplitter,
+    TokenTextSplitter
+)
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_community.vectorstores import Chroma
+import sqlite3
+import uuid
+from typing import List
 
 load_dotenv()
 
@@ -688,3 +698,401 @@ class KnowledgeService:
 
         results['total_count'] = len(results['vector_results']) + len(results['board_results'])
         return results
+
+
+class RAGService:
+    """RAG를 위한 텍스트 분할 및 벡터 DB 관리 클래스"""
+
+    def __init__(self, chroma_persist_directory: str = "./data/chroma_db",
+                 sqlite_db_path: str = "./data/board.db"):
+        """
+        RAG 서비스 초기화
+
+        Args:
+            chroma_persist_directory: ChromaDB 저장 경로
+            sqlite_db_path: SQLite 데이터베이스 경로
+        """
+        # Azure OpenAI Embeddings 초기화
+        self.embeddings = AzureOpenAIEmbeddings(
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            api_version=embedding_api_version,
+            azure_deployment=embedding_deployment
+        )
+
+        # ChromaDB 초기화
+        self.chroma_persist_directory = chroma_persist_directory
+        os.makedirs(chroma_persist_directory, exist_ok=True)
+
+        # SQLite DB 초기화
+        self.sqlite_db_path = sqlite_db_path
+        os.makedirs(os.path.dirname(sqlite_db_path), exist_ok=True)
+        self._initialize_board_db()
+
+    def _initialize_board_db(self):
+        """게시판 DB 테이블 초기화"""
+        conn = sqlite3.connect(self.sqlite_db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS board_posts (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                enhanced_doc_url TEXT,
+                original_doc_url TEXT,
+                author TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                views INTEGER DEFAULT 0,
+                quality_score INTEGER DEFAULT 0,
+                metadata TEXT
+            )
+        """)
+
+        conn.commit()
+        conn.close()
+
+    def split_text(self, text: str, split_type: str = "recursive",
+                   chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
+        """
+        텍스트를 청크로 분할
+
+        Args:
+            text: 분할할 텍스트
+            split_type: 분할 방식 ("character", "recursive", "semantic", "token")
+            chunk_size: 청크 크기
+            chunk_overlap: 청크 간 겹침 크기
+
+        Returns:
+            분할된 텍스트 청크 리스트
+        """
+        try:
+            if split_type == "character":
+                splitter = CharacterTextSplitter(
+                    separator="\n\n",
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap
+                )
+            elif split_type == "recursive":
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    separators=["\n\n", "\n", " ", ""]
+                )
+            elif split_type == "semantic":
+                splitter = SemanticChunker(
+                    embeddings=self.embeddings,
+                    breakpoint_threshold_type="percentile"
+                )
+            elif split_type == "token":
+                splitter = TokenTextSplitter(
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap
+                )
+            else:
+                raise ValueError(f"지원하지 않는 분할 방식: {split_type}")
+
+            chunks = splitter.split_text(text)
+            return chunks
+
+        except Exception as e:
+            print(f"텍스트 분할 중 오류 발생: {e}")
+            # Fallback: recursive splitter 사용
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap
+            )
+            return splitter.split_text(text)
+
+    def embed_and_store(self, text: str, metadata: Dict = None,
+                       split_type: str = "recursive",
+                       chunk_size: int = 1000,
+                       chunk_overlap: int = 200,
+                       collection_name: str = "knowledge_base") -> Dict:
+        """
+        텍스트를 청크로 분할하고 벡터 DB에 임베딩하여 저장
+
+        Args:
+            text: 저장할 텍스트
+            metadata: 메타데이터
+            split_type: 분할 방식
+            chunk_size: 청크 크기
+            chunk_overlap: 청크 간 겹침
+            collection_name: ChromaDB 컬렉션 이름
+
+        Returns:
+            저장 결과 딕셔너리
+        """
+        try:
+            # 텍스트 분할
+            chunks = self.split_text(text, split_type, chunk_size, chunk_overlap)
+
+            if not chunks:
+                return {
+                    "success": False,
+                    "message": "텍스트 분할 실패",
+                    "chunk_count": 0
+                }
+
+            # 메타데이터 설정
+            if metadata is None:
+                metadata = {}
+
+            # 각 청크에 고유 ID 부여
+            doc_id = metadata.get('doc_id', str(uuid.uuid4()))
+            metadata['doc_id'] = doc_id
+
+            # ChromaDB에 저장
+            vectorstore = Chroma.from_texts(
+                texts=chunks,
+                embedding=self.embeddings,
+                metadatas=[{**metadata, 'chunk_id': i} for i in range(len(chunks))],
+                collection_name=collection_name,
+                persist_directory=self.chroma_persist_directory
+            )
+
+            return {
+                "success": True,
+                "message": "VectorDB 저장 완료",
+                "chunk_count": len(chunks),
+                "doc_id": doc_id,
+                "collection_name": collection_name
+            }
+
+        except Exception as e:
+            print(f"VectorDB 저장 중 오류 발생: {e}")
+            return {
+                "success": False,
+                "message": f"저장 실패: {str(e)}",
+                "chunk_count": 0
+            }
+
+    def search_similar(self, query: str, k: int = 5,
+                      collection_name: str = "knowledge_base") -> List[Dict]:
+        """
+        유사도 검색
+
+        Args:
+            query: 검색 쿼리
+            k: 반환할 결과 개수
+            collection_name: 검색할 컬렉션 이름
+
+        Returns:
+            검색 결과 리스트
+        """
+        try:
+            vectorstore = Chroma(
+                collection_name=collection_name,
+                embedding_function=self.embeddings,
+                persist_directory=self.chroma_persist_directory
+            )
+
+            results = vectorstore.similarity_search_with_score(query, k=k)
+
+            formatted_results = []
+            for doc, score in results:
+                formatted_results.append({
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "similarity_score": float(score)
+                })
+
+            return formatted_results
+
+        except Exception as e:
+            print(f"검색 중 오류 발생: {e}")
+            return []
+
+    def save_to_board_db(self, title: str, content: str,
+                        enhanced_doc_url: str = None,
+                        original_doc_url: str = None,
+                        author: str = "AI Knowledge System",
+                        quality_score: int = 0,
+                        metadata: Dict = None) -> Dict:
+        """
+        게시판 DB에 문서 저장
+
+        Args:
+            title: 문서 제목
+            content: 문서 내용 (보완된 내용)
+            enhanced_doc_url: 보완된 문서 다운로드 링크
+            original_doc_url: 원본 문서 다운로드 링크
+            author: 작성자
+            quality_score: 품질 점수
+            metadata: 추가 메타데이터 (JSON 형식으로 저장)
+
+        Returns:
+            저장 결과 딕셔너리
+        """
+        try:
+            conn = sqlite3.connect(self.sqlite_db_path)
+            cursor = conn.cursor()
+
+            post_id = str(uuid.uuid4())
+            import json
+
+            # datetime 객체를 문자열로 변환
+            if metadata:
+                metadata_copy = {}
+                for key, value in metadata.items():
+                    if isinstance(value, dict):
+                        # 중첩된 딕셔너리 처리
+                        metadata_copy[key] = {}
+                        for k, v in value.items():
+                            if isinstance(v, datetime):
+                                metadata_copy[key][k] = v.isoformat()
+                            else:
+                                metadata_copy[key][k] = v
+                    elif isinstance(value, datetime):
+                        metadata_copy[key] = value.isoformat()
+                    else:
+                        metadata_copy[key] = value
+                metadata_json = json.dumps(metadata_copy, ensure_ascii=False)
+            else:
+                metadata_json = None
+
+            cursor.execute("""
+                INSERT INTO board_posts
+                (id, title, content, enhanced_doc_url, original_doc_url,
+                 author, quality_score, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (post_id, title, content, enhanced_doc_url, original_doc_url,
+                  author, quality_score, metadata_json))
+
+            conn.commit()
+            conn.close()
+
+            return {
+                "success": True,
+                "message": "게시판 저장 완료",
+                "post_id": post_id
+            }
+
+        except Exception as e:
+            print(f"게시판 저장 중 오류 발생: {e}")
+            return {
+                "success": False,
+                "message": f"저장 실패: {str(e)}"
+            }
+
+    def get_board_posts(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """
+        게시판 게시글 조회
+
+        Args:
+            limit: 조회할 게시글 수
+            offset: 시작 위치
+
+        Returns:
+            게시글 리스트
+        """
+        try:
+            conn = sqlite3.connect(self.sqlite_db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT * FROM board_posts
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            import json
+            posts = []
+            for row in rows:
+                post = dict(row)
+                if post.get('metadata'):
+                    post['metadata'] = json.loads(post['metadata'])
+                posts.append(post)
+
+            return posts
+
+        except Exception as e:
+            print(f"게시글 조회 중 오류 발생: {e}")
+            return []
+
+    def get_board_post_by_id(self, post_id: str) -> Optional[Dict]:
+        """
+        특정 게시글 조회 및 조회수 증가
+
+        Args:
+            post_id: 게시글 ID
+
+        Returns:
+            게시글 정보
+        """
+        try:
+            conn = sqlite3.connect(self.sqlite_db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # 조회수 증가
+            cursor.execute("""
+                UPDATE board_posts
+                SET views = views + 1
+                WHERE id = ?
+            """, (post_id,))
+
+            # 게시글 조회
+            cursor.execute("""
+                SELECT * FROM board_posts WHERE id = ?
+            """, (post_id,))
+
+            row = cursor.fetchone()
+            conn.commit()
+            conn.close()
+
+            if row:
+                import json
+                post = dict(row)
+                if post.get('metadata'):
+                    post['metadata'] = json.loads(post['metadata'])
+                return post
+
+            return None
+
+        except Exception as e:
+            print(f"게시글 조회 중 오류 발생: {e}")
+            return None
+
+    def delete_board_post(self, post_id: str) -> Dict:
+        """
+        게시글 삭제
+
+        Args:
+            post_id: 게시글 ID
+
+        Returns:
+            삭제 결과 딕셔너리
+        """
+        try:
+            conn = sqlite3.connect(self.sqlite_db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("DELETE FROM board_posts WHERE id = ?", (post_id,))
+
+            conn.commit()
+            deleted = cursor.rowcount > 0
+            conn.close()
+
+            if deleted:
+                return {
+                    "success": True,
+                    "message": "게시글 삭제 완료"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "게시글을 찾을 수 없습니다"
+                }
+
+        except Exception as e:
+            print(f"게시글 삭제 중 오류 발생: {e}")
+            return {
+                "success": False,
+                "message": f"삭제 실패: {str(e)}"
+            }

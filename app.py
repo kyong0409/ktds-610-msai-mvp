@@ -595,50 +595,155 @@ def show_creation_results():
                     title = knote.get("title", "제목 없음")
                     proposal = knote.get("proposal", "")
                     evidence = knote.get("evidence", [])
+                    status = knote.get('status', 'draft')
+                    version = knote.get('version', '1.0')
 
-                    with st.expander(f"📝 {k_note_id}: {title}"):
-                        st.write(f"**제목**: {title}")
-                        st.write(f"**상태**: {knote.get('status', 'draft')}")
-                        st.write(f"**버전**: {knote.get('version', '1.0')}")
+                    # 상태에 따른 아이콘
+                    status_icon = "✅" if status == "validated" else "📝"
+
+                    with st.expander(f"{status_icon} **{k_note_id}**: {title}", expanded=True):
+                        # 헤더 정보
+                        header_col1, header_col2, header_col3 = st.columns(3)
+                        with header_col1:
+                            st.markdown(f"**📌 상태**: `{status}`")
+                        with header_col2:
+                            st.markdown(f"**🔢 버전**: `{version}`")
+                        with header_col3:
+                            owners = knote.get('owners', [])
+                            if owners:
+                                st.markdown(f"**👥 담당자**: {', '.join(owners)}")
+
+                        st.markdown("---")
 
                         # 제안 내용
-                        st.markdown("### 💡 제안 내용")
-                        st.write(proposal)
+                        st.markdown("### 💡 핵심 제안")
+                        st.info(proposal)
 
                         # 적용 가능성
                         if "applicability" in knote and isinstance(knote["applicability"], dict):
                             st.markdown("### 🎯 적용 가능성")
                             applicability = knote["applicability"]
-                            if "when" in applicability and isinstance(applicability['when'], list):
-                                st.write(f"**적용 시기:** {', '.join(str(x) for x in applicability['when'])}")
-                            if "when_not" in applicability and isinstance(applicability['when_not'], list):
-                                st.write(f"**적용 제외:** {', '.join(str(x) for x in applicability['when_not'])}")
+
+                            col_app1, col_app2 = st.columns(2)
+
+                            with col_app1:
+                                if "when" in applicability and isinstance(applicability['when'], list) and applicability['when']:
+                                    st.markdown("**✅ 적용 권장 상황**")
+                                    for item in applicability['when']:
+                                        st.markdown(f"- {item}")
+
+                                if "assumptions" in applicability and isinstance(applicability.get('assumptions'), list) and applicability['assumptions']:
+                                    st.markdown("**📋 전제 조건**")
+                                    for assumption in applicability['assumptions']:
+                                        st.markdown(f"- {assumption}")
+
+                            with col_app2:
+                                if "when_not" in applicability and isinstance(applicability['when_not'], list) and applicability['when_not']:
+                                    st.markdown("**❌ 적용 제외 상황**")
+                                    for item in applicability['when_not']:
+                                        st.markdown(f"- {item}")
+
+                        # 예상 효과
+                        if "metrics_effect" in knote and knote["metrics_effect"]:
+                            st.markdown("### 📈 예상 효과")
+                            metrics = knote["metrics_effect"]
+                            if isinstance(metrics, dict):
+                                # 유효한 메트릭만 필터링 (숫자 또는 문자열만)
+                                valid_metrics = {}
+                                list_metrics = {}
+
+                                for key, value in metrics.items():
+                                    if isinstance(value, (int, float, str)):
+                                        # 리스트가 아닌 값만 메트릭으로 표시
+                                        valid_metrics[key] = value
+                                    elif isinstance(value, list):
+                                        # 리스트는 별도로 처리
+                                        list_metrics[key] = value
+
+                                # 메트릭 카드로 표시 (숫자/문자열)
+                                if valid_metrics:
+                                    metric_cols = st.columns(len(valid_metrics))
+                                    for idx, (key, value) in enumerate(valid_metrics.items()):
+                                        with metric_cols[idx]:
+                                            st.metric(key, value)
+
+                                # 리스트 형태는 별도 표시
+                                if list_metrics:
+                                    for key, items in list_metrics.items():
+                                        st.markdown(f"**{key}**")
+                                        for item in items:
+                                            st.markdown(f"- {item}")
+                            elif isinstance(metrics, list):
+                                # 리스트인 경우
+                                for item in metrics:
+                                    st.markdown(f"- {item}")
+                            else:
+                                st.write(str(metrics))
 
                         # 근거 문서
-                        if evidence and isinstance(evidence, list):
+                        if evidence and isinstance(evidence, list) and len(evidence) > 0:
                             st.markdown("### 📚 근거 문서")
-                            for ev in evidence[:3]:
+                            for idx, ev in enumerate(evidence[:5], 1):
                                 if isinstance(ev, dict):
                                     doc_id = ev.get("doc_id", "unknown")
+                                    chunk_id = ev.get("chunk_id", "")
+                                    quote = ev.get("quote", "")
                                     confidence = ev.get("confidence", 0)
-                                    st.write(f"- 문서: {doc_id} (신뢰도: {confidence})")
+
+                                    with st.container():
+                                        st.markdown(f"**{idx}. 문서 ID**: `{doc_id}` | **신뢰도**: {confidence:.0%}")
+                                        if quote:
+                                            st.caption(f"💬 \"{quote[:200]}...\"" if len(quote) > 200 else f"💬 \"{quote}\"")
                                 else:
-                                    st.write(f"- {str(ev)}")
+                                    st.markdown(f"- {str(ev)}")
 
                         # 위험 및 제한사항
                         if "risks_limits" in knote and isinstance(knote["risks_limits"], list) and knote["risks_limits"]:
                             st.markdown("### ⚠️ 위험 및 제한사항")
                             for risk in knote["risks_limits"]:
-                                st.write(f"- {str(risk)}")
+                                st.warning(f"⚠️ {str(risk)}")
+
+                        # 권장 실험
+                        if "recommended_experiments" in knote and isinstance(knote["recommended_experiments"], list) and knote["recommended_experiments"]:
+                            st.markdown("### 🧪 권장 실험/검증")
+                            for exp_idx, exp in enumerate(knote["recommended_experiments"], 1):
+                                if isinstance(exp, dict):
+                                    exp_name = exp.get("name", f"실험 {exp_idx}")
+                                    exp_duration = exp.get("duration", "미정")
+                                    exp_criteria = exp.get("success_criteria", "미정")
+
+                                    st.markdown(f"**{exp_idx}. {exp_name}**")
+                                    st.markdown(f"- **기간**: {exp_duration}")
+                                    st.markdown(f"- **성공 기준**: {exp_criteria}")
+                                else:
+                                    st.markdown(f"{exp_idx}. {str(exp)}")
+
+                        # 관련 K-Note
+                        if "related" in knote and isinstance(knote["related"], list) and knote["related"]:
+                            st.markdown("### 🔗 관련 K-Note")
+                            st.write(", ".join([f"`{r}`" for r in knote["related"]]))
+
+                        st.markdown("---")
 
                         # 액션 버튼
-                        col_action1, col_action2 = st.columns(2)
+                        col_action1, col_action2, col_action3 = st.columns(3)
                         with col_action1:
-                            if st.button(f"📚 게시판에 등록", key=f"save_knote_{i}"):
+                            if st.button(f"📚 게시판에 등록", key=f"save_knote_{i}", use_container_width=True):
                                 st.success("게시판 등록 기능은 추후 구현 예정입니다.")
                         with col_action2:
-                            if st.button(f"💾 VectorDB에 저장", key=f"vector_knote_{i}"):
+                            if st.button(f"💾 VectorDB에 저장", key=f"vector_knote_{i}", use_container_width=True):
                                 st.success("VectorDB 저장 기능은 추후 구현 예정입니다.")
+                        with col_action3:
+                            if st.button(f"📥 JSON 다운로드", key=f"download_knote_{i}", use_container_width=True):
+                                import json
+                                json_str = json.dumps(knote, ensure_ascii=False, indent=2)
+                                st.download_button(
+                                    label="다운로드",
+                                    data=json_str,
+                                    file_name=f"{k_note_id}.json",
+                                    mime="application/json",
+                                    key=f"download_btn_{i}"
+                                )
                 else:
                     # 문자열인 경우 (기존 시뮬레이션 형식)
                     with st.expander(f"K-Note {i}: {knote}"):

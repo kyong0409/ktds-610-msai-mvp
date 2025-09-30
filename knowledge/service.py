@@ -524,6 +524,30 @@ class KnowledgeService:
         
         return fallback_content
 
+    def upload_enhanced_document_to_blob(self, enhanced_content: str, k_note_id: str, title: str) -> str:
+        """구체화된 문서를 Azure Blob Storage enhanced 컨테이너에 업로드"""
+        try:
+            import io
+            from datetime import datetime
+            
+            # 파일명 생성 (K-Note ID와 제목 기반)
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{k_note_id}_{safe_title}_{timestamp}_enhanced.md"
+            
+            # 문서 내용을 파일 형태로 변환
+            enhanced_file = io.BytesIO(enhanced_content.encode('utf-8'))
+            enhanced_file.name = filename
+            
+            # FileProcessor를 사용하여 업로드
+            enhanced_url = self.file_processor.upload_file(enhanced_file, "enhanced")
+            
+            return enhanced_url
+            
+        except Exception as e:
+            print(f"Enhanced 문서 업로드 실패: {e}")
+            return None
+
     def save_to_vector_db(self, analysis_result: Dict) -> Dict:
         """VectorDB에 저장"""
         try:

@@ -812,12 +812,20 @@ def show_creation_results():
                             
                             with col_save1:
                                 if st.button(f"📚 VectorDB & 게시판에 저장", key=f"save_enhanced_{i}", type="primary", use_container_width=True):
-                                    with st.spinner("VectorDB와 게시판에 저장하는 중..."):
+                                    with st.spinner("Azure Blob Storage, VectorDB, 게시판에 저장하는 중..."):
                                         try:
-                                            # RAG 서비스 초기화
+                                            # 서비스 초기화
                                             rag_service = RAGService()
+                                            knowledge_service = st.session_state.knowledge_service
                                             
-                                            # 메타데이터 준비
+                                            # 1. Azure Blob Storage에 구체화된 문서 업로드
+                                            enhanced_url = knowledge_service.upload_enhanced_document_to_blob(
+                                                enhanced_result['enhanced_content'],
+                                                k_note_id,
+                                                title
+                                            )
+                                            
+                                            # 메타데이터 준비 (Azure URL 포함)
                                             metadata = {
                                                 "doc_id": k_note_id,
                                                 "title": title,
@@ -826,42 +834,66 @@ def show_creation_results():
                                                 "source_type": "enhanced_knote",
                                                 "k_note_id": k_note_id,
                                                 "version": version,
-                                                "status": status
+                                                "status": status,
+                                                "enhanced_url": enhanced_url
                                             }
                                             
-                                            # VectorDB에 저장
+                                            # 2. VectorDB에 저장
                                             vector_result = rag_service.embed_and_store(
                                                 text=enhanced_result['enhanced_content'],
                                                 metadata=metadata,
                                                 split_type="semantic"
                                             )
                                             
-                                            # 게시판에 저장
+                                            # 3. 게시판에 저장
                                             board_result = rag_service.save_to_board_db(
                                                 title=title,
                                                 content=enhanced_result['enhanced_content'],
+                                                enhanced_doc_url=enhanced_url,
                                                 author=', '.join(knote.get('owners', ['AI Knowledge System'])),
                                                 quality_score=quality_score,
                                                 metadata={
                                                     **enhanced_result.get('generation_metadata', {}),
-                                                    "original_knote": knote
+                                                    "original_knote": knote,
+                                                    "enhanced_url": enhanced_url
                                                 }
                                             )
                                             
-                                            if vector_result['success'] and board_result['success']:
-                                                st.success(f"✅ 저장 완료! VectorDB: {vector_result['chunk_count']}개 청크, 게시판: 1개 게시글")
+                                            # 결과 확인 및 표시
+                                            success_messages = []
+                                            error_messages = []
+                                            
+                                            if enhanced_url:
+                                                success_messages.append("Azure Blob Storage 업로드")
+                                            else:
+                                                error_messages.append("Azure Blob Storage 업로드 실패")
+                                            
+                                            if vector_result['success']:
+                                                success_messages.append(f"VectorDB: {vector_result['chunk_count']}개 청크")
+                                            else:
+                                                error_messages.append(f"VectorDB: {vector_result['message']}")
+                                            
+                                            if board_result['success']:
+                                                success_messages.append("게시판: 1개 게시글")
+                                            else:
+                                                error_messages.append(f"게시판: {board_result['message']}")
+                                            
+                                            if not error_messages:
+                                                st.success(f"✅ 저장 완료! {', '.join(success_messages)}")
                                                 # 저장 완료 표시
                                                 st.session_state[f"saved_{k_note_id}"] = True
+                                                # 업로드된 URL 정보 표시
+                                                if enhanced_url:
+                                                    st.info(f"📁 Azure Blob Storage URL: {enhanced_url}")
                                             else:
-                                                error_msg = []
-                                                if not vector_result['success']:
-                                                    error_msg.append(f"VectorDB: {vector_result['message']}")
-                                                if not board_result['success']:
-                                                    error_msg.append(f"게시판: {board_result['message']}")
-                                                st.error(f"저장 실패: {', '.join(error_msg)}")
+                                                st.error(f"저장 실패: {', '.join(error_messages)}")
+                                                if success_messages:
+                                                    st.warning(f"부분 성공: {', '.join(success_messages)}")
                                                 
                                         except Exception as e:
                                             st.error(f"저장 중 오류 발생: {str(e)}")
+                                            import traceback
+                                            st.code(traceback.format_exc())
                             
                             with col_save2:
                                 if st.button(f"🔄 재구체화", key=f"re_enhance_{i}", use_container_width=True):

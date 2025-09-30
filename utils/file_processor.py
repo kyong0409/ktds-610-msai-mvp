@@ -70,7 +70,15 @@ class FileProcessor:
 
                 blob_client.upload_blob(file, overwrite=True)
 
+                # 업로드된 파일의 URL 생성
+                blob_url = blob_client.url
+                
                 st.success(f"{file.name} 파일이 {azure_storage_container} 컨테이너에 업로드되었습니다.")
+                
+                return blob_url
             
             except Exception as e:
                 st.error(f"파일 업로드 실패: {str(e)}")
+                return None
+        
+        return None

@@ -4,10 +4,18 @@ import time
 from datetime import datetime
 import os
 import tempfile
+import json
 from typing import List, Dict
 from knowledge.service import KnowledgeService, RAGService
 from knowledge_creation.creation_engine import KnowledgeCreationEngine
 from board.service import BoardService
+
+# JSON 직렬화를 위한 커스텀 serializer
+def json_serializer(obj):
+    """JSON 직렬화를 위한 커스텀 serializer"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 # Streamlit 페이지 설정
 st.set_page_config(
@@ -707,7 +715,8 @@ def show_creation_results():
                                     confidence = ev.get("confidence", 0)
 
                                     with st.container():
-                                        st.markdown(f"**{idx}. 문서 ID**: `{doc_id}` | **신뢰도**: {confidence:.0%}")
+                                        confidence_pct = f"{confidence:.0%}" if isinstance(confidence, (int, float)) else str(confidence)
+                                        st.markdown(f"**{idx}. 문서 ID**: `{doc_id}` | **신뢰도**: {confidence_pct}")
                                         if quote:
                                             st.caption(f"💬 \"{quote[:200]}...\"" if len(quote) > 200 else f"💬 \"{quote}\"")
                                 else:
@@ -762,6 +771,12 @@ def show_creation_results():
                                 if st.button(f"🔄 문서 구체화", key=f"enhance_knote_{i}", type="primary", use_container_width=True):
                                     with st.spinner("K-Note를 표준 문서로 구체화하는 중..."):
                                         try:
+                                            # 디버깅: K-Note 타입 확인
+                                            if not isinstance(knote, dict):
+                                                st.error(f"K-Note 타입 오류: 딕셔너리가 아닌 {type(knote)} 타입입니다.")
+                                                st.write("K-Note 내용:", knote)
+                                                return
+                                            
                                             knowledge_service = st.session_state.knowledge_service
                                             enhanced_result = knowledge_service.enhance_knote_to_standard_document(
                                                 knote, additional_points
@@ -771,6 +786,9 @@ def show_creation_results():
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"구체화 중 오류 발생: {str(e)}")
+                                            # 추가 디버깅 정보
+                                            st.write("K-Note 타입:", type(knote))
+                                            st.write("K-Note 내용 (처음 500자):", str(knote)[:500])
                         else:
                             # 구체화된 문서 표시
                             enhanced_result = st.session_state[enhanced_key]
@@ -853,12 +871,11 @@ def show_creation_results():
                             
                             with col_save3:
                                 # JSON 다운로드
-                                import json
                                 enhanced_json = {
                                     "original_knote": knote,
                                     "enhanced_document": enhanced_result
                                 }
-                                json_str = json.dumps(enhanced_json, ensure_ascii=False, indent=2)
+                                json_str = json.dumps(enhanced_json, ensure_ascii=False, indent=2, default=json_serializer)
                                 st.download_button(
                                     label="📥 전체 다운로드",
                                     data=json_str,
@@ -879,8 +896,7 @@ def show_creation_results():
                         
                         with col_basic1:
                             # 원본 K-Note JSON 다운로드
-                            import json
-                            json_str = json.dumps(knote, ensure_ascii=False, indent=2)
+                            json_str = json.dumps(knote, ensure_ascii=False, indent=2, default=json_serializer)
                             st.download_button(
                                 label="📥 원본 K-Note 다운로드",
                                 data=json_str,

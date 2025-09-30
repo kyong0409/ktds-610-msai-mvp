@@ -320,6 +320,10 @@ class KnowledgeService:
     def enhance_knote_to_standard_document(self, knote_json: Dict, additional_improvement_points: str = "") -> Dict:
         """K-Note를 표준 지식 문서로 변환"""
         
+        # 입력 검증
+        if not isinstance(knote_json, dict):
+            raise ValueError(f"knote_json must be a dictionary, got {type(knote_json)}")
+        
         template = KNOTE_TO_STANDARD_DOC_PROMPT
         
         prompt = PromptTemplate.from_template(template)
@@ -328,7 +332,14 @@ class KnowledgeService:
         try:
             # K-Note JSON을 문자열로 변환
             import json
-            knote_json_str = json.dumps(knote_json, ensure_ascii=False, indent=2)
+            
+            def json_serializer(obj):
+                """JSON 직렬화를 위한 커스텀 serializer"""
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            
+            knote_json_str = json.dumps(knote_json, ensure_ascii=False, indent=2, default=json_serializer)
             
             response = chain.invoke({
                 "k_note_json": knote_json_str,
@@ -447,8 +458,14 @@ class KnowledgeService:
         # 메트릭 효과 추가
         metrics_effect = knote_json.get("metrics_effect", {})
         if metrics_effect:
-            for key, value in metrics_effect.items():
-                fallback_content += f"- {key}: {value}\n"
+            if isinstance(metrics_effect, dict):
+                for key, value in metrics_effect.items():
+                    fallback_content += f"- {key}: {value}\n"
+            elif isinstance(metrics_effect, list):
+                for item in metrics_effect:
+                    fallback_content += f"- {str(item)}\n"
+            else:
+                fallback_content += f"- {str(metrics_effect)}\n"
         else:
             fallback_content += "성과 지표는 원본 K-Note를 참조하세요.\n"
 

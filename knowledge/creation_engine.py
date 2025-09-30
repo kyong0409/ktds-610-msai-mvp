@@ -132,9 +132,96 @@ class State(TypedDict, total=False):
     current_stage: str
     stages_completed: List[str]
     is_running: bool
+    streamlit_state: Any
 
 
 # 유틸리티 함수
+def update_streamlit_state(state: State, stage: str, extra_data: Dict = None):
+    """Streamlit 세션 상태 업데이트 및 UI 반영"""
+    st_state = state.get("streamlit_state")
+    if st_state is not None and hasattr(st_state, 'creation_state'):
+        update_dict = {
+            "current_stage": stage,
+            "stages_completed": state.get("stages_completed", []),
+            "iteration": state.get("iter", 0),
+            "max_iterations": state.get("max_iter", 3),
+            "is_running": True
+        }
+
+        # 추가 데이터 병합
+        if extra_data:
+            update_dict.update(extra_data)
+
+        # 세션 상태 업데이트
+        st_state.creation_state.update(update_dict)
+
+        # UI 업데이트 (placeholder가 있는 경우)
+        if hasattr(st_state, 'stage_placeholders') and stage in st_state.stage_placeholders:
+            stage_names = {
+                "normalize": "📚 데이터 정규화",
+                "sample": "🎲 다양성 샘플링",
+                "summarize": "📝 구조화 요약",
+                "expand": "🔍 RAG 컨텍스트 확장",
+                "synthesize": "🧬 아날로지 제안 생성",
+                "verify": "✅ 제안 검증",
+                "productize": "📋 K-Note 생성",
+                "score": "📊 품질 평가"
+            }
+            st_state.stage_placeholders[stage].success(f"✅ {stage_names.get(stage, stage)} - 완료")
+
+
+def update_stage_ui(state: State, stage: str, status: str = "running"):
+    """단계별 UI 상태 업데이트 (running/completed)"""
+    st_state = state.get("streamlit_state")
+    if st_state is not None and hasattr(st_state, 'stage_placeholders') and stage in st_state.stage_placeholders:
+        stage_names = {
+            "normalize": "📚 데이터 정규화",
+            "sample": "🎲 다양성 샘플링",
+            "summarize": "📝 구조화 요약",
+            "expand": "🔍 RAG 컨텍스트 확장",
+            "synthesize": "🧬 아날로지 제안 생성",
+            "verify": "✅ 제안 검증",
+            "productize": "📋 K-Note 생성",
+            "score": "📊 품질 평가"
+        }
+
+        if status == "running":
+            st_state.stage_placeholders[stage].warning(f"🔄 {stage_names.get(stage, stage)} - 진행 중...")
+        elif status == "completed":
+            st_state.stage_placeholders[stage].success(f"✅ {stage_names.get(stage, stage)} - 완료")
+
+
+def log_to_streamlit(state: State, message: str, level: str = "info"):
+    """Streamlit 화면에 로그 실시간 출력"""
+    st_state = state.get("streamlit_state")
+    if st_state is not None:
+        if not hasattr(st_state, 'creation_logs'):
+            st_state.creation_logs = []
+
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        st_state.creation_logs.append({"time": timestamp, "message": message, "level": level})
+
+        # 실시간 UI 업데이트
+        if hasattr(st_state, 'log_placeholder'):
+            with st_state.log_placeholder.container():
+                # 최근 10개 로그만 표시
+                recent_logs = st_state.creation_logs[-10:]
+                for log in recent_logs:
+                    if log['level'] == 'error':
+                        import streamlit as st
+                        st.error(f"[{log['time']}] {log['message']}")
+                    elif log['level'] == 'warning':
+                        import streamlit as st
+                        st.warning(f"[{log['time']}] {log['message']}")
+                    elif log['level'] == 'success':
+                        import streamlit as st
+                        st.success(f"[{log['time']}] {log['message']}")
+                    else:
+                        import streamlit as st
+                        st.info(f"[{log['time']}] {log['message']}")
+
+
 def cosine(a: np.ndarray, b: np.ndarray) -> float:
     """코사인 유사도 계산 (안전한 버전)"""
     # NumPy 배열로 변환
@@ -193,7 +280,6 @@ def diverse_select(
 
     # 길이 검증
     if len(qualities) != n or len(recencies) != n or len(domains) != n:
-        print(f"경고: 입력 길이 불일치 - embeddings:{n}, qualities:{len(qualities)}, recencies:{len(recencies)}, domains:{len(domains)}")
         # 최소 길이로 맞춤
         min_len = min(n, len(qualities), len(recencies), len(domains))
         embeddings = embeddings[:min_len]
@@ -235,7 +321,6 @@ def diverse_select(
             scored.append((float(score), i))
 
         if not scored:
-            print(f"다양성 샘플링 조기 종료: 더 이상 후보가 없음 (선택됨: {len(S)}개)")
             break
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -255,17 +340,10 @@ def diverse_select(
 
             # 유사도가 너무 높으면 제거 (하지만 최소 3개는 유지)
             if avg_sim > max_avg_sim and len(S) > 3:
-                print(f"평균 유사도 {avg_sim:.3f} > {max_avg_sim}, 샘플 제거")
                 dom_count[domains[chosen]] -= 1
                 S.pop()
                 continue
-            elif avg_sim > max_avg_sim:
-                print(f"평균 유사도 {avg_sim:.3f} > {max_avg_sim}이지만 최소 개수 유지")
 
-    if attempts >= max_attempts:
-        print(f"경고: 최대 시도 횟수 도달 ({max_attempts}), 현재 선택: {len(S)}개")
-
-    print(f"다양성 샘플링 완료: {len(S)}개 선택 (목표: {k}개)")
     return S
 
 
@@ -308,7 +386,6 @@ def ensure_chroma(state: State, chroma_persist_directory: str, collection_name: 
     except KeyError as e:
         if "_type" in str(e):
             # 기존 컬렉션에 문제가 있으면 삭제하고 재생성
-            print(f"ChromaDB 컬렉션 메타데이터 오류 감지. 컬렉션을 재생성합니다: {e}")
             import chromadb
             from chromadb.config import Settings
 
@@ -320,9 +397,8 @@ def ensure_chroma(state: State, chroma_persist_directory: str, collection_name: 
             try:
                 # 기존 컬렉션 삭제
                 client.delete_collection(name=collection_name)
-                print(f"기존 컬렉션 '{collection_name}' 삭제 완료")
             except Exception as del_e:
-                print(f"컬렉션 삭제 중 오류 (무시): {del_e}")
+                pass
 
             # 새로 생성
             vectorstore = Chroma(
@@ -330,7 +406,6 @@ def ensure_chroma(state: State, chroma_persist_directory: str, collection_name: 
                 embedding_function=embeddings,
                 persist_directory=chroma_persist_directory
             )
-            print(f"컬렉션 '{collection_name}' 재생성 완료")
         else:
             raise
 
@@ -355,7 +430,6 @@ def chroma_prefetch_candidates(collection, quality_min=0.6, prefetch=100, prekee
         )
 
         if not results["ids"] or len(results["ids"]) == 0:
-            print("ChromaDB에 문서가 없습니다.")
             return {"ids": [], "documents": [], "embeddings": [], "metadatas": []}
 
         # 임베딩 데이터 존재 여부 확인
@@ -396,11 +470,9 @@ def chroma_prefetch_candidates(collection, quality_min=0.6, prefetch=100, prekee
             for k in filtered.keys():
                 filtered[k] = [filtered[k][int(i)] for i in idx]
 
-        print(f"Chroma prefetch 완료: {len(filtered['ids'])}개 청크 수집")
         return filtered
 
     except Exception as e:
-        print(f"Chroma prefetch 오류: {e}")
         import traceback
         traceback.print_exc()
         return {"ids": [], "documents": [], "embeddings": [], "metadatas": []}
@@ -442,7 +514,6 @@ def chroma_query_texts(collection, query_texts: List[str], top_k: int = 6) -> Li
         return out
 
     except Exception as e:
-        print(f"Chroma query 오류: {e}")
         import traceback
         traceback.print_exc()
         return []
@@ -452,12 +523,16 @@ def chroma_query_texts(collection, query_texts: List[str], top_k: int = 6) -> Li
 def node_normalize(state: State) -> State:
     """1단계: 데이터 정규화 및 샘플 후보 수집"""
     state["current_stage"] = "normalize"
+    update_stage_ui(state, "normalize", "running")
+    log_to_streamlit(state, "📚 [1/8] 데이터 정규화 시작", "info")
 
     s = state["cfg_services"]["sampling"]
     chroma_cfg = state["cfg_services"]["chroma"]
 
+    log_to_streamlit(state, "  → ChromaDB 연결 중...", "info")
     ensure_chroma(state, chroma_cfg["path"], chroma_cfg["collection"])
 
+    log_to_streamlit(state, f"  → 후보 청크 수집 중 (품질 기준: {s['quality_min']})", "info")
     batch = chroma_prefetch_candidates(
         state["chroma_collection"],
         quality_min=s["quality_min"],
@@ -479,23 +554,27 @@ def node_normalize(state: State) -> State:
             "pii_flag": md.get("pii_flag", False),
         })
 
+    log_to_streamlit(state, f"  ✅ 정규화 완료: {len(state['all_chunks_meta'])}개 청크 수집", "success")
     state["stages_completed"].append("normalize")
+    update_stage_ui(state, "normalize", "completed")
     return state
 
 
 def node_sample(state: State) -> State:
     """2단계: MMR 기반 다양성 샘플링"""
     state["current_stage"] = "sample"
+    update_stage_ui(state, "sample", "running")
+    log_to_streamlit(state, "🎲 [2/8] 다양성 샘플링 시작", "info")
 
     try:
         s = state["cfg_services"]["sampling"]
         pool = [c for c in state["all_chunks_meta"]
                 if c["quality"] >= s["quality_min"] and not c.get("pii_flag", False)]
 
-        print(f"샘플링: 전체 {len(state['all_chunks_meta'])}개 중 {len(pool)}개가 품질 기준 통과")
+        log_to_streamlit(state, f"  → 전체 {len(state['all_chunks_meta'])}개 중 {len(pool)}개가 품질 기준 통과", "info")
 
         if not pool:
-            print("품질 기준을 통과한 청크가 없습니다.")
+            log_to_streamlit(state, "  ⚠️ 품질 기준을 통과한 청크가 없습니다", "warning")
             state["samples"] = []
             state["stages_completed"].append("sample")
             return state
@@ -508,11 +587,11 @@ def node_sample(state: State) -> State:
             if emb is not None and isinstance(emb, (list, np.ndarray)) and len(emb) > 0:
                 pool_with_embeddings.append(c)
 
-        print(f"임베딩이 있는 청크: {len(pool_with_embeddings)}개")
+        log_to_streamlit(state, f"  → 임베딩이 있는 청크: {len(pool_with_embeddings)}개", "info")
 
         if not pool_with_embeddings:
             # 임베딩이 없으면 랜덤 샘플
-            print("임베딩이 없어 랜덤 샘플링 수행")
+            log_to_streamlit(state, "  → 임베딩 없음, 랜덤 샘플링 수행", "warning")
             import random
             state["samples"] = random.sample(pool, min(s["k"], len(pool)))
             state["stages_completed"].append("sample")
@@ -524,7 +603,7 @@ def node_sample(state: State) -> State:
         recencies = recency_score([c.get("date") for c in pool_with_embeddings])
         domains = [c.get("domain", "unknown") for c in pool_with_embeddings]
 
-        print(f"다양성 샘플링 시작: {len(embeddings)}개 임베딩, k={s['k']}")
+        log_to_streamlit(state, f"  → MMR 다양성 샘플링 실행 중 (목표: {s['k']}개)...", "info")
 
         idxs = diverse_select(
             embeddings, qualities, recencies, domains,
@@ -534,14 +613,14 @@ def node_sample(state: State) -> State:
             max_avg_sim=s["max_avg_sim"]
         )
 
-        print(f"샘플링 완료: {len(idxs)}개 선택됨")
-
         state["samples"] = [pool_with_embeddings[i] for i in idxs]
+        log_to_streamlit(state, f"  ✅ 샘플링 완료: {len(state['samples'])}개 선택", "success")
         state["stages_completed"].append("sample")
+        update_stage_ui(state, "sample", "completed")
         return state
 
     except Exception as e:
-        print(f"샘플링 중 오류 발생: {e}")
+        log_to_streamlit(state, f"  ❌ 샘플링 오류: {str(e)}", "error")
         import traceback
         traceback.print_exc()
         # 폴백: 랜덤 샘플링
@@ -549,20 +628,21 @@ def node_sample(state: State) -> State:
         pool = state.get("all_chunks_meta", [])
         state["samples"] = random.sample(pool, min(10, len(pool))) if pool else []
         state["stages_completed"].append("sample")
+        update_stage_ui(state, "sample", "completed")
         return state
 
 
 def node_summarize(state: State) -> State:
     """3단계: 구조화 요약 생성"""
     state["current_stage"] = "summarize"
-    print(f"\n=== [단계 3/8] 구조화 요약 생성 시작 ===")
-    print(f"샘플 수: {len(state['samples'])}개")
+    update_stage_ui(state, "summarize", "running")
+    log_to_streamlit(state, f"📝 [3/8] 구조화 요약 생성 시작 (샘플: {len(state['samples'])}개)", "info")
 
     llm = get_llm("summarizer", state["cfg_roles"])
     outs: List[Summary] = []
 
     for idx, c in enumerate(state["samples"], 1):
-        print(f"요약 생성 중 ({idx}/{len(state['samples'])}): {c['doc_id'][:20]}...")
+        log_to_streamlit(state, f"  → 요약 생성 중 ({idx}/{len(state['samples'])}): {c['doc_id'][:20]}...", "info")
 
         prompt = f"""
 아래 텍스트만 근거로 기술 문서 구조 요약(JSON) 생성.
@@ -584,9 +664,8 @@ JSON만 출력.
             s["doc_id"] = c["doc_id"]
             s["chunk_id"] = c["chunk_id"]
             outs.append(s)
-            print(f"  ✓ 요약 완료: problem='{s.get('problem', '')[:50]}...'")
         except Exception as e:
-            print(f"  ✗ 요약 실패: {e}")
+            log_to_streamlit(state, f"    ⚠️ 요약 실패: {str(e)[:50]}", "warning")
             # 기본 요약
             outs.append({
                 "doc_id": c["doc_id"],
@@ -599,17 +678,18 @@ JSON만 출력.
                 "risks": []
             })
 
-    print(f"=== 요약 단계 완료: {len(outs)}개 생성 ===\n")
+    log_to_streamlit(state, f"  ✅ 요약 단계 완료: {len(outs)}개 생성", "success")
     state["summaries"] = outs
     state["stages_completed"].append("summarize")
+    update_stage_ui(state, "summarize", "completed")
     return state
 
 
 def node_expand_rag(state: State) -> State:
     """4단계: RAG 기반 컨텍스트 확장"""
     state["current_stage"] = "expand"
-    print(f"\n=== [단계 4/8] RAG 컨텍스트 확장 시작 ===")
-    print(f"요약 수: {len(state['summaries'])}개")
+    update_stage_ui(state, "expand", "running")
+    log_to_streamlit(state, f"🔍 [4/8] RAG 컨텍스트 확장 시작 (요약: {len(state['summaries'])}개)", "info")
 
     col = state["chroma_collection"]
     top_k = state["cfg_services"]["rag"]["top_k"]
@@ -627,28 +707,29 @@ def node_expand_rag(state: State) -> State:
         if not queries:
             queries = ["general engineering patterns"]
 
-        print(f"RAG 검색 중 ({idx}/{len(state['summaries'])}): {len(queries)}개 쿼리")
         ctx = chroma_query_texts(col, queries, top_k=top_k)
         expansions[f"{s['doc_id']}::{s['chunk_id']}"] = ctx
-        print(f"  ✓ {len(ctx)}개 관련 문서 발견")
 
-    print(f"=== RAG 확장 완료: 총 {sum(len(v) for v in expansions.values())}개 컨텍스트 ===\n")
+    total_ctx = sum(len(v) for v in expansions.values())
+    log_to_streamlit(state, f"  ✅ RAG 확장 완료: 총 {total_ctx}개 컨텍스트 수집", "success")
     state["expansions"] = expansions
     state["stages_completed"].append("expand")
+    update_stage_ui(state, "expand", "completed")
     return state
 
 
 def node_synthesize(state: State) -> State:
     """5단계: 아날로지 기반 제안 생성"""
     state["current_stage"] = "synthesize"
-    print(f"\n=== [단계 5/8] 아날로지 기반 융합 제안 생성 시작 ===")
+    update_stage_ui(state, "synthesize", "running")
+    log_to_streamlit(state, f"🧬 [5/8] 아날로지 기반 융합 제안 생성 시작", "info")
 
     llm = get_llm("synthesizer", state["cfg_roles"])
     props: List[Proposal] = []
 
     # 페어링
     pairs = list(zip(state["summaries"][::2], state["summaries"][1::2]))
-    print(f"요약 페어링: {len(pairs)}쌍 생성")
+    log_to_streamlit(state, f"  → 요약 페어링: {len(pairs)}쌍 생성", "info")
 
     for a, b in pairs:
         key_a = f"{a['doc_id']}::{a['chunk_id']}"
@@ -673,7 +754,6 @@ B_ctx={json.dumps(ctx_b_data, ensure_ascii=False)}
 - 각 제안: statement, applicability(when/when_not/assumptions), expected_effects, risks_limits, evidence[doc_id,chunk_id,quote,confidence], quick_experiment.
 - JSON 배열로만 출력.
 """
-        print(f"제안 생성 중 (페어 {len(props)//2 + 1}/{len(pairs)})")
         try:
             response = llm.invoke(prompt).content
             if "```json" in response:
@@ -686,31 +766,30 @@ B_ctx={json.dumps(ctx_b_data, ensure_ascii=False)}
             parsed = json.loads(json_str)
             new_props = parsed if isinstance(parsed, list) else [parsed]
             props.extend(new_props)
-            print(f"  ✓ {len(new_props)}개 제안 생성")
+            log_to_streamlit(state, f"  → 페어 {len(props)//2 + 1}/{len(pairs)}: {len(new_props)}개 제안 생성", "info")
         except Exception as e:
-            print(f"  ✗ 합성 실패: {e}")
+            log_to_streamlit(state, f"  ⚠️ 합성 실패: {str(e)[:50]}", "warning")
 
-    print(f"=== 융합 제안 완료: 총 {len(props)}개 제안 ===\n")
+    log_to_streamlit(state, f"  ✅ 융합 제안 완료: 총 {len(props)}개 제안", "success")
     state["proposals"] = props
     state["stages_completed"].append("synthesize")
+    update_stage_ui(state, "synthesize", "completed")
     return state
 
 
 def node_verify(state: State) -> State:
     """6단계: 제안 검증"""
     state["current_stage"] = "verify"
-    print(f"\n=== [단계 6/8] 제안 검증 시작 ===")
-    print(f"제안 수: {len(state['proposals'])}개")
+    update_stage_ui(state, "verify", "running")
+    log_to_streamlit(state, f"✅ [6/8] 제안 검증 시작 (제안: {len(state['proposals'])}개)", "info")
 
     llm = get_llm("verifier", state["cfg_roles"])
     col = state["chroma_collection"]
     verdicts: List[Verdict] = []
 
     for idx, p in enumerate(state["proposals"], 1):
-        print(f"검증 중 ({idx}/{len(state['proposals'])}): {p.get('statement', '')[:50]}...")
         q = [p["statement"]] + p["applicability"].get("assumptions", [])[:1]
         counter_ctx = chroma_query_texts(col, q, top_k=3)
-        print(f"  - 반례 검색: {len(counter_ctx)}개 문서 조회")
 
         # 반례 데이터를 미리 계산
         counter_data = [{'text': c['text'][:200]} for c in counter_ctx]
@@ -736,36 +815,32 @@ counter_evidence={json.dumps(counter_data, ensure_ascii=False)}
 
             verdict = json.loads(json_str)
             verdicts.append(verdict)
-            print(f"  ✓ 검증 결과: {verdict.get('verdict', 'unknown')}")
-            if verdict.get("reasons"):
-                print(f"    사유: {verdict['reasons'][0][:80]}...")
         except Exception as e:
-            print(f"  ✗ 검증 실패: {e}")
+            log_to_streamlit(state, f"  ⚠️ 검증 실패: {str(e)[:50]}", "warning")
             verdicts.append({"verdict": "reject", "reasons": ["검증 오류"], "added_evidence": []})
 
     accept_count = sum(1 for v in verdicts if v.get("verdict") == "accept")
-    print(f"=== 검증 완료: {accept_count}/{len(verdicts)}개 승인 ===\n")
+    log_to_streamlit(state, f"  ✅ 검증 완료: {accept_count}/{len(verdicts)}개 승인", "success")
 
     state["verdicts"] = verdicts
     state["stages_completed"].append("verify")
+    update_stage_ui(state, "verify", "completed")
     return state
 
 
 def node_productize(state: State) -> State:
     """7단계: K-Note 생성"""
     state["current_stage"] = "productize"
-    print(f"\n=== [단계 7/8] K-Note 생성 시작 ===")
+    update_stage_ui(state, "productize", "running")
 
     llm = get_llm("productizer", state["cfg_roles"])
     kns: List[KNote] = []
 
     accepted_proposals = [(p, v) for p, v in zip(state["proposals"], state["verdicts"])
                           if v["verdict"] == "accept"]
-    print(f"승인된 제안 수: {len(accepted_proposals)}개")
+    log_to_streamlit(state, f"📋 [7/8] K-Note 생성 시작 (승인된 제안: {len(accepted_proposals)}개)", "info")
 
     for idx, (p, v) in enumerate(accepted_proposals, 1):
-        print(f"K-Note 생성 중 ({idx}/{len(accepted_proposals)}): {p.get('statement', '')[:50]}...")
-
         prompt = f"""
 아래 proposal을 K-Note 스키마로 변환해 JSON만 출력.
 필수: k_note_id(임시), title, proposal, applicability, evidence, metrics_effect, risks_limits, recommended_experiments, status, owners, version, related
@@ -784,21 +859,23 @@ proposal={json.dumps(p, ensure_ascii=False)}
             kn["k_note_id"] = kn.get("k_note_id") or f"KN-{hash_text(p['statement'])[:8]}"
             kn["status"] = kn.get("status") or "validated"
             kns.append(kn)
-            print(f"  ✓ K-Note 생성 완료: {kn.get('title', 'Untitled')[:60]}")
+            log_to_streamlit(state, f"  → K-Note {idx}/{len(accepted_proposals)}: {kn.get('title', 'Untitled')[:40]}...", "info")
         except Exception as e:
-            print(f"  ✗ K-Note 생성 실패: {e}")
+            log_to_streamlit(state, f"  ⚠️ K-Note 생성 실패: {str(e)[:50]}", "warning")
 
-    print(f"=== K-Note 생성 완료: 총 {len(kns)}개 ===\n")
+    log_to_streamlit(state, f"  ✅ K-Note 생성 완료: 총 {len(kns)}개", "success")
 
     state["knotes"] = state.get("knotes", []) + kns
     state["stages_completed"].append("productize")
+    update_stage_ui(state, "productize", "completed")
     return state
 
 
 def node_score(state: State) -> State:
     """8단계: 평가"""
     state["current_stage"] = "score"
-    print(f"\n=== [단계 8/8] 품질 평가 시작 ===")
+    update_stage_ui(state, "score", "running")
+    log_to_streamlit(state, f"📊 [8/8] 품질 평가 시작", "info")
 
     # 간단 점수 (실제로는 임베딩 기반 신규성/커버리지 평가 가능)
     import random
@@ -809,14 +886,11 @@ def node_score(state: State) -> State:
     }
 
     avg_score = np.mean(list(state["scores"].values()))
-    print(f"평가 점수:")
-    print(f"  - 신규성 (novelty): {state['scores']['novelty']}")
-    print(f"  - 커버리지 (coverage): {state['scores']['coverage']}")
-    print(f"  - 유용성 (utility): {state['scores']['utility']}")
-    print(f"  - 평균: {avg_score:.2f}")
-    print(f"=== 품질 평가 완료 ===\n")
+    log_to_streamlit(state, f"  → 신규성: {state['scores']['novelty']}, 커버리지: {state['scores']['coverage']}, 유용성: {state['scores']['utility']}", "info")
+    log_to_streamlit(state, f"  ✅ 품질 평가 완료 (평균: {avg_score:.2f})", "success")
 
     state["stages_completed"].append("score")
+    update_stage_ui(state, "score", "completed")
     return state
 
 
@@ -825,29 +899,29 @@ def should_continue(state: State) -> str:
     s = state.get("scores", {})
     avg = np.mean([s.get("novelty", 0), s.get("coverage", 0), s.get("utility", 0)])
 
-    print(f"=== 반복 조건 평가: 평균 점수={avg:.2f} ===")
+    log_to_streamlit(state, f"🔄 반복 조건 평가: 평균 점수={avg:.2f}", "info")
 
     if avg >= 0.75:
         state["stop_reason"] = f"score_threshold({avg:.2f})"
         state["is_running"] = False
-        print(f"점수 기준으로 중단: {avg:.2f}")
+        log_to_streamlit(state, f"✅ 점수 기준으로 완료: {avg:.2f}", "success")
         return "stop"
 
     # iter 카운터 증가를 먼저 수행
     current_iter = state.get("iter", 0) + 1
     state["iter"] = current_iter
     max_iter = state.get("max_iter", 3)
-    
-    print(f"반복 횟수: {current_iter}/{max_iter}")
-    
+
+    log_to_streamlit(state, f"🔄 반복 {current_iter}/{max_iter}", "info")
+
     if current_iter >= max_iter:
         state["stop_reason"] = "max_iter"
         state["is_running"] = False
-        print(f"최대 반복 횟수 도달로 중단: {current_iter}/{max_iter}")
+        log_to_streamlit(state, f"✅ 최대 반복 횟수 도달로 완료: {current_iter}/{max_iter}", "success")
         return "stop"
 
     state["stages_completed"] = ["normalize"]  # 일부 단계 유지
-    print(f"다음 반복 계속 (반복 {current_iter})")
+    log_to_streamlit(state, f"🔄 다음 반복 계속 (반복 {current_iter})", "info")
     return "continue"
 
 
@@ -892,7 +966,7 @@ class KnowledgeCreationEngine:
         # LangGraph 컴파일
         self.graph = build_graph().compile()
 
-    def run(self, max_iter: int = None) -> State:
+    def run(self, max_iter: int = None, streamlit_state = None) -> State:
         """지식 창출 프로세스 실행"""
         if max_iter is None:
             max_iter = self.max_iterations
@@ -915,6 +989,10 @@ class KnowledgeCreationEngine:
             "current_stage": "normalize",
             "is_running": True
         }
+
+        # Streamlit 세션 상태 연결
+        if streamlit_state is not None:
+            initial_state["streamlit_state"] = streamlit_state
 
         # 그래프 실행 (recursion_limit 설정)
         result = self.graph.invoke(initial_state, config={"recursion_limit": 100})

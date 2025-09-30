@@ -383,20 +383,111 @@ def knowledge_creation_page():
 
         if st.button("🔬 Multi-Agent 지식 창출 시작", type="primary", key="start_creation"):
             try:
+                # 프로그레스 바와 상태 표시 컨테이너
+                progress_placeholder = st.empty()
+                status_placeholder = st.empty()
+                stage_detail_placeholder = st.empty()
+
                 # 진행 상황 컨테이너
                 with st.status("🚀 지식 창출 진행 중...", expanded=True) as status:
-                    st.write("📚 Multi-Agent 워크플로우 실행 중...")
-                    st.write("콘솔 출력을 확인하여 상세 진행 상황을 볼 수 있습니다.")
+                    stages = ["normalize", "sample", "summarize", "expand", "synthesize", "verify", "productize", "score"]
+                    stage_names = {
+                        "normalize": "📚 데이터 정규화",
+                        "sample": "🎲 다양성 샘플링",
+                        "summarize": "📝 구조화 요약",
+                        "expand": "🔍 RAG 컨텍스트 확장",
+                        "synthesize": "🧬 아날로지 제안 생성",
+                        "verify": "✅ 제안 검증",
+                        "productize": "📋 K-Note 생성",
+                        "score": "📊 품질 평가"
+                    }
 
-                    # LangGraph 엔진 실행
+                    # 진행 상황을 표시할 placeholder
+                    log_container = st.container()
+
+                    with log_container:
+                        st.write("📚 **Multi-Agent 워크플로우 실행 중...**")
+                        st.write("")
+
+                        # 단계별 진행 표시
+                        for stage, name in stage_names.items():
+                            st.write(f"⏳ {name}")
+
+                    # 세션 상태 초기화
+                    if 'creation_state' not in st.session_state:
+                        st.session_state.creation_state = {}
+
+                    if 'creation_logs' not in st.session_state:
+                        st.session_state.creation_logs = []
+
+                    st.session_state.creation_state.update({
+                        "is_running": True,
+                        "current_stage": "normalize",
+                        "stages_completed": [],
+                        "iteration": 0,
+                        "max_iterations": max_iterations
+                    })
+
+                    # 실시간 진행 상황 표시 영역
+                    st.write("---")
+                    st.write("**📝 실행 과정:**")
+
+                    # 각 단계별 placeholder 생성
+                    stage_placeholders = {}
+                    for stage in stages:
+                        stage_placeholders[stage] = st.empty()
+                        stage_placeholders[stage].info(f"⏳ {stage_names[stage]} - 대기 중...")
+
+                    # 상세 로그 영역
+                    st.write("---")
+                    st.write("**🔍 상세 로그:**")
+                    log_placeholder = st.empty()
+
+                    # LangGraph 엔진 실행 (Streamlit 세션 상태 전달)
                     creation_engine = st.session_state.creation_engine
-                    result = creation_engine.run(max_iter=max_iterations)
+
+                    # 세션 상태에 placeholder 저장
+                    st.session_state.stage_placeholders = stage_placeholders
+                    st.session_state.log_placeholder = log_placeholder
+
+                    result = creation_engine.run(max_iter=max_iterations, streamlit_state=st.session_state)
+
+                    # 실행 후 로그 표시
+                    with log_placeholder.container():
+                        if hasattr(st.session_state, 'creation_logs') and st.session_state.creation_logs:
+                            for log in st.session_state.creation_logs[-50:]:  # 최근 50개만 표시
+                                if log['level'] == 'success':
+                                    st.success(log['message'])
+                                elif log['level'] == 'warning':
+                                    st.warning(log['message'])
+                                elif log['level'] == 'error':
+                                    st.error(log['message'])
+                                else:
+                                    st.info(log['message'])
+                        else:
+                            st.write("로그가 없습니다.")
 
                     status.update(label="✅ 지식 창출 완료!", state="complete", expanded=False)
 
                 # 결과 요약
                 st.markdown("---")
                 st.markdown("### 📊 실행 결과 요약")
+
+                # 단계별 완료 상태 표시
+                st.markdown("#### 🔄 완료된 단계")
+                completed_stages = result.get('stages_completed', [])
+
+                cols = st.columns(len(stages))
+                for i, (stage, name) in enumerate(stage_names.items()):
+                    with cols[i]:
+                        if stage in completed_stages:
+                            st.success(f"✅")
+                            st.caption(name.split()[1])  # 이모지 제외한 이름
+                        else:
+                            st.warning(f"⏸️")
+                            st.caption(name.split()[1])
+
+                st.markdown("---")
 
                 col1, col2, col3, col4 = st.columns(4)
 
@@ -445,23 +536,6 @@ def knowledge_creation_page():
 
                 if result.get("knotes"):
                     st.success(f"✅ {len(result['knotes'])}개의 K-Note가 성공적으로 생성되었습니다!")
-
-                    # 생성된 K-Note 미리보기
-                    st.markdown("### 📝 생성된 K-Note")
-                    for idx, kn in enumerate(result['knotes'], 1):
-                        with st.expander(f"K-Note #{idx}: {kn.get('title', 'Untitled')}", expanded=(idx == 1)):
-                            st.markdown(f"**ID:** `{kn.get('k_note_id', 'N/A')}`")
-                            st.markdown(f"**상태:** {kn.get('status', 'N/A')}")
-                            st.markdown(f"**제안:**")
-                            st.write(kn.get('proposal', {}).get('statement', 'N/A'))
-
-                            if kn.get('evidence'):
-                                st.markdown(f"**근거 수:** {len(kn['evidence'])}개")
-
-                            if kn.get('recommended_experiments'):
-                                st.markdown(f"**실험 제안:**")
-                                for exp in kn['recommended_experiments'][:2]:
-                                    st.write(f"- {exp}")
                 else:
                     st.warning(f"⚠️ K-Note가 생성되지 않았습니다. 종료 이유: {result.get('stop_reason', 'unknown')}")
 
@@ -480,28 +554,64 @@ def knowledge_creation_page():
         # 실시간 모니터링 패널
         st.subheader("📈 실시간 모니터링")
 
-        if 'creation_state' in st.session_state:
+        if 'creation_state' in st.session_state and st.session_state.creation_state:
             creation_state = st.session_state.creation_state
 
             # 진행률 표시
-            stages = ["normalize", "sample", "summarize", "synthesize", "verify", "productize", "score"]
-            current_stage_idx = stages.index(creation_state.get("current_stage", "normalize"))
-            progress = (current_stage_idx + 1) / len(stages)
+            stages = ["normalize", "sample", "summarize", "expand", "synthesize", "verify", "productize", "score"]
+            stage_names = {
+                "normalize": "📚 데이터 정규화",
+                "sample": "🎲 다양성 샘플링",
+                "summarize": "📝 구조화 요약",
+                "expand": "🔍 RAG 컨텍스트 확장",
+                "synthesize": "🧬 아날로지 제안 생성",
+                "verify": "✅ 제안 검증",
+                "productize": "📋 K-Note 생성",
+                "score": "📊 품질 평가"
+            }
+
+            # 현재 단계 인덱스 계산
+            current_stage = creation_state.get("current_stage", "normalize")
+            if current_stage in stages:
+                current_stage_idx = stages.index(current_stage)
+                progress = (current_stage_idx + 1) / len(stages)
+            else:
+                progress = 0.0
 
             st.progress(progress)
-            st.write(f"**현재 단계:** {creation_state.get('current_stage', 'None')}")
-            st.write(f"**반복:** {creation_state.get('iteration', 0)}/{creation_state.get('max_iterations', 0)}")
+            st.write(f"**현재 단계:** {stage_names.get(current_stage, current_stage)}")
+            st.write(f"**반복:** {creation_state.get('iteration', 0)}/{creation_state.get('max_iterations', 3)}")
 
             # 단계별 상태
-            with st.container():
-                st.write("**단계별 진행 상황:**")
-                for i, stage in enumerate(stages):
-                    if stage in creation_state.get('stages_completed', []):
-                        st.write(f"✅ {stage.title()}")
-                    elif stage == creation_state.get('current_stage'):
-                        st.write(f"🔄 {stage.title()} (진행중)")
-                    else:
-                        st.write(f"⏳ {stage.title()}")
+            st.markdown("---")
+            st.write("**단계별 진행 상황:**")
+
+            for i, stage in enumerate(stages):
+                stage_display = stage_names.get(stage, stage.title())
+
+                if stage in creation_state.get('stages_completed', []):
+                    st.markdown(f"✅ **{stage_display}**")
+                elif stage == current_stage:
+                    st.markdown(f"🔄 **{stage_display}** _(진행중)_")
+                else:
+                    st.markdown(f"⏳ {stage_display}")
+
+            # 통계 정보
+            if creation_state.get('current_samples') or creation_state.get('proposals') or creation_state.get('knotes'):
+                st.markdown("---")
+                st.write("**중간 결과:**")
+
+                if creation_state.get('current_samples'):
+                    st.write(f"• 샘플: {len(creation_state['current_samples'])}개")
+                if creation_state.get('summaries'):
+                    st.write(f"• 요약: {len(creation_state['summaries'])}개")
+                if creation_state.get('proposals'):
+                    st.write(f"• 제안: {len(creation_state['proposals'])}개")
+                if creation_state.get('verdicts'):
+                    accepted = sum(1 for v in creation_state['verdicts'] if v.get('verdict') == 'accept')
+                    st.write(f"• 승인된 제안: {accepted}/{len(creation_state['verdicts'])}개")
+                if creation_state.get('knotes'):
+                    st.write(f"• K-Note: {len(creation_state['knotes'])}개")
         else:
             st.info("지식 창출을 시작하면 실시간 모니터링이 표시됩니다.")
 

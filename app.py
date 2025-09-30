@@ -450,7 +450,13 @@ def knowledge_creation_page():
                     st.session_state.stage_placeholders = stage_placeholders
                     st.session_state.log_placeholder = log_placeholder
 
-                    result = creation_engine.run(max_iter=max_iterations, streamlit_state=st.session_state)
+                    result = creation_engine.run(
+                        max_iter=max_iterations,
+                        streamlit_state=st.session_state,
+                        quality_threshold=quality_threshold,
+                        agent_temperature=agent_temperature,
+                        enable_verification=enable_verification
+                    )
 
                     # 실행 후 로그 표시
                     with log_placeholder.container():

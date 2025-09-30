@@ -29,8 +29,8 @@ embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embe
 DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
 GPT4O_DEPLOYMENT = os.getenv("AZURE_GPT4O_DEPLOYMENT", "gpt-4o")
 
-# 역할별 LLM 설정
-ROLES = {
+# 역할별 LLM 설정 (기본값)
+DEFAULT_ROLES = {
     "librarian": {"model": DEPLOYMENT_NAME, "temperature": 0.0},
     "summarizer": {"model": DEPLOYMENT_NAME, "temperature": 0.0},
     "synthesizer": {"model": GPT4O_DEPLOYMENT, "temperature": 0.3},
@@ -38,8 +38,8 @@ ROLES = {
     "productizer": {"model": DEPLOYMENT_NAME, "temperature": 0.1},
 }
 
-# 서비스 설정
-SERVICES = {
+# 서비스 설정 (기본값)
+DEFAULT_SERVICES = {
     "chroma": {
         "path": "./data/chroma_db",
         "collection": "knowledge_base",
@@ -133,6 +133,8 @@ class State(TypedDict, total=False):
     stages_completed: List[str]
     is_running: bool
     streamlit_state: Any
+    quality_threshold: float
+    enable_verification: bool
 
 
 # 유틸리티 함수
@@ -781,6 +783,21 @@ def node_verify(state: State) -> State:
     """6단계: 제안 검증"""
     state["current_stage"] = "verify"
     update_stage_ui(state, "verify", "running")
+
+    # 검증 단계 활성화 여부 확인
+    enable_verification = state.get("enable_verification", True)
+
+    if not enable_verification:
+        log_to_streamlit(state, f"⏭️ [6/8] 제안 검증 건너뜀 (비활성화됨)", "info")
+        # 모든 제안을 자동 승인
+        verdicts: List[Verdict] = []
+        for p in state["proposals"]:
+            verdicts.append({"verdict": "accept", "reasons": ["검증 단계 비활성화"], "added_evidence": []})
+        state["verdicts"] = verdicts
+        state["stages_completed"].append("verify")
+        update_stage_ui(state, "verify", "completed")
+        return state
+
     log_to_streamlit(state, f"✅ [6/8] 제안 검증 시작 (제안: {len(state['proposals'])}개)", "info")
 
     llm = get_llm("verifier", state["cfg_roles"])
@@ -899,12 +916,15 @@ def should_continue(state: State) -> str:
     s = state.get("scores", {})
     avg = np.mean([s.get("novelty", 0), s.get("coverage", 0), s.get("utility", 0)])
 
-    log_to_streamlit(state, f"🔄 반복 조건 평가: 평균 점수={avg:.2f}", "info")
+    # 사용자 설정 품질 임계값 사용
+    quality_threshold = state.get("quality_threshold", 0.75)
 
-    if avg >= 0.75:
-        state["stop_reason"] = f"score_threshold({avg:.2f})"
+    log_to_streamlit(state, f"🔄 반복 조건 평가: 평균 점수={avg:.2f}, 임계값={quality_threshold:.2f}", "info")
+
+    if avg >= quality_threshold:
+        state["stop_reason"] = f"score_threshold({avg:.2f}>={quality_threshold:.2f})"
         state["is_running"] = False
-        log_to_streamlit(state, f"✅ 점수 기준으로 완료: {avg:.2f}", "success")
+        log_to_streamlit(state, f"✅ 품질 임계값 달성으로 완료: {avg:.2f}>={quality_threshold:.2f}", "success")
         return "stop"
 
     # iter 카운터 증가를 먼저 수행
@@ -966,18 +986,29 @@ class KnowledgeCreationEngine:
         # LangGraph 컴파일
         self.graph = build_graph().compile()
 
-    def run(self, max_iter: int = None, streamlit_state = None) -> State:
+    def run(self, max_iter: int = None, streamlit_state = None,
+            quality_threshold: float = 0.75, agent_temperature: float = 0.3,
+            enable_verification: bool = True) -> State:
         """지식 창출 프로세스 실행"""
         if max_iter is None:
             max_iter = self.max_iterations
+
+        # 역할별 temperature 동적 설정
+        roles_config = {
+            "librarian": {"model": DEPLOYMENT_NAME, "temperature": 0.0},  # 정규화는 항상 0.0
+            "summarizer": {"model": DEPLOYMENT_NAME, "temperature": 0.0},  # 요약도 정확성 위해 0.0
+            "synthesizer": {"model": GPT4O_DEPLOYMENT, "temperature": agent_temperature},  # 창의성 적용
+            "verifier": {"model": DEPLOYMENT_NAME, "temperature": 0.0},  # 검증은 항상 0.0
+            "productizer": {"model": DEPLOYMENT_NAME, "temperature": agent_temperature * 0.3},  # 약간의 창의성
+        }
 
         # 초기 상태
         initial_state: State = {
             "iter": 0,
             "max_iter": max_iter,
-            "cfg_roles": ROLES,
+            "cfg_roles": roles_config,
             "cfg_services": {
-                **SERVICES,
+                **DEFAULT_SERVICES,
                 "chroma": {
                     "path": self.chroma_persist_directory,
                     "collection": self.collection_name,
@@ -987,7 +1018,9 @@ class KnowledgeCreationEngine:
             "knotes": [],
             "stages_completed": [],
             "current_stage": "normalize",
-            "is_running": True
+            "is_running": True,
+            "quality_threshold": quality_threshold,
+            "enable_verification": enable_verification
         }
 
         # Streamlit 세션 상태 연결

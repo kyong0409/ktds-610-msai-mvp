@@ -226,6 +226,23 @@ def knowledge_registration_page():
                         # 서비스 클래스 인스턴스 가져오기
                         chatbot_service = st.session_state.chatbot_service
                         board_service = st.session_state.board_service
+                        knowledge_service = st.session_state.knowledge_service
+
+                        # Azure Blob Storage에 파일 업로드
+                        # 1. 원본 파일 업로드
+                        uploaded_file.seek(0)  # 파일 포인터 리셋
+                        knowledge_service.file_processor.upload_file(uploaded_file, "original")
+
+                        # 2. 보완된 문서 업로드 ({원본파일명}_enhanced.md)
+                        import io
+                        original_filename = uploaded_file.name.rsplit('.', 1)[0]  # 확장자 제거
+                        enhanced_filename = f"{original_filename}_enhanced.md"
+                        enhanced_content = st.session_state.enhanced_document['enhanced_content']
+
+                        # 보완 문서를 파일 형태로 변환
+                        enhanced_file = io.BytesIO(enhanced_content.encode('utf-8'))
+                        enhanced_file.name = enhanced_filename
+                        knowledge_service.file_processor.upload_file(enhanced_file, "enhanced")
 
                         # VectorDB 저장
                         vector_result = chatbot_service.save_to_vector_db(

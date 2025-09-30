@@ -564,9 +564,25 @@ def show_process_summary():
 
 def show_creation_results():
     """창출 결과 표시"""
+    if 'creation_state' not in st.session_state:
+        return
+        
     creation_state = st.session_state.creation_state
 
-    if not creation_state.get("is_running") and creation_state.get("knotes"):
+    # 디버깅 정보 표시 (개발용)
+    if st.checkbox("🔍 디버깅 정보 표시", False):
+        st.write("**Creation State Debug:**")
+        st.write(f"- is_running: {creation_state.get('is_running')}")
+        st.write(f"- knotes count: {len(creation_state.get('knotes', []))}")
+        st.write(f"- knotes type: {type(creation_state.get('knotes', []))}")
+        if creation_state.get('knotes'):
+            st.write(f"- first knote type: {type(creation_state['knotes'][0])}")
+        st.write("**Full creation_state keys:**")
+        st.write(list(creation_state.keys()))
+
+    # K-Note가 있으면 표시 (is_running 조건 완화)
+    knotes = creation_state.get("knotes", [])
+    if knotes and len(knotes) > 0:
         st.markdown("---")
         st.subheader("🎉 지식 창출 결과")
 
@@ -725,32 +741,178 @@ def show_creation_results():
 
                         st.markdown("---")
 
-                        # 액션 버튼
-                        col_action1, col_action2, col_action3 = st.columns(3)
-                        with col_action1:
-                            if st.button(f"📚 게시판에 등록", key=f"save_knote_{i}", use_container_width=True):
-                                st.success("게시판 등록 기능은 추후 구현 예정입니다.")
-                        with col_action2:
-                            if st.button(f"💾 VectorDB에 저장", key=f"vector_knote_{i}", use_container_width=True):
-                                st.success("VectorDB 저장 기능은 추후 구현 예정입니다.")
-                        with col_action3:
-                            if st.button(f"📥 JSON 다운로드", key=f"download_knote_{i}", use_container_width=True):
-                                import json
-                                json_str = json.dumps(knote, ensure_ascii=False, indent=2)
-                                st.download_button(
-                                    label="다운로드",
-                                    data=json_str,
-                                    file_name=f"{k_note_id}.json",
-                                    mime="application/json",
-                                    key=f"download_btn_{i}"
+                        # 구체화 단계
+                        st.markdown("### 📝 문서 구체화")
+                        
+                        # 구체화 상태 확인
+                        enhanced_key = f"enhanced_doc_{k_note_id}"
+                        
+                        if enhanced_key not in st.session_state:
+                            # 구체화 버튼
+                            col_enhance1, col_enhance2 = st.columns([2, 1])
+                            with col_enhance1:
+                                additional_points = st.text_area(
+                                    "추가 보완사항 (선택사항)", 
+                                    placeholder="구체화 과정에서 추가로 보완하고 싶은 내용을 입력하세요...",
+                                    key=f"additional_points_{i}",
+                                    height=100
                                 )
+                            with col_enhance2:
+                                st.markdown("<br>", unsafe_allow_html=True)
+                                if st.button(f"🔄 문서 구체화", key=f"enhance_knote_{i}", type="primary", use_container_width=True):
+                                    with st.spinner("K-Note를 표준 문서로 구체화하는 중..."):
+                                        try:
+                                            knowledge_service = st.session_state.knowledge_service
+                                            enhanced_result = knowledge_service.enhance_knote_to_standard_document(
+                                                knote, additional_points
+                                            )
+                                            st.session_state[enhanced_key] = enhanced_result
+                                            st.success("✅ 문서 구체화가 완료되었습니다!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"구체화 중 오류 발생: {str(e)}")
+                        else:
+                            # 구체화된 문서 표시
+                            enhanced_result = st.session_state[enhanced_key]
+                            
+                            st.success("✅ 구체화된 표준 문서가 생성되었습니다!")
+                            
+                            # 구체화된 문서 미리보기
+                            with st.expander("📄 구체화된 문서 미리보기", expanded=False):
+                                st.markdown(enhanced_result['enhanced_content'])
+                            
+                            # 품질 점수 표시
+                            quality_score = enhanced_result.get('quality_score', 0)
+                            st.metric("문서 품질 점수", f"{quality_score}/100")
+                            
+                            st.markdown("---")
+                            
+                            # VectorDB & 게시판 저장 버튼
+                            st.markdown("### 💾 지식 저장")
+                            
+                            col_save1, col_save2, col_save3 = st.columns(3)
+                            
+                            with col_save1:
+                                if st.button(f"📚 VectorDB & 게시판에 저장", key=f"save_enhanced_{i}", type="primary", use_container_width=True):
+                                    with st.spinner("VectorDB와 게시판에 저장하는 중..."):
+                                        try:
+                                            # RAG 서비스 초기화
+                                            rag_service = RAGService()
+                                            
+                                            # 메타데이터 준비
+                                            metadata = {
+                                                "doc_id": k_note_id,
+                                                "title": title,
+                                                "author": ', '.join(knote.get('owners', ['AI Knowledge System'])),
+                                                "quality_score": quality_score,
+                                                "source_type": "enhanced_knote",
+                                                "k_note_id": k_note_id,
+                                                "version": version,
+                                                "status": status
+                                            }
+                                            
+                                            # VectorDB에 저장
+                                            vector_result = rag_service.embed_and_store(
+                                                text=enhanced_result['enhanced_content'],
+                                                metadata=metadata,
+                                                split_type="semantic"
+                                            )
+                                            
+                                            # 게시판에 저장
+                                            board_result = rag_service.save_to_board_db(
+                                                title=title,
+                                                content=enhanced_result['enhanced_content'],
+                                                author=', '.join(knote.get('owners', ['AI Knowledge System'])),
+                                                quality_score=quality_score,
+                                                metadata={
+                                                    **enhanced_result.get('generation_metadata', {}),
+                                                    "original_knote": knote
+                                                }
+                                            )
+                                            
+                                            if vector_result['success'] and board_result['success']:
+                                                st.success(f"✅ 저장 완료! VectorDB: {vector_result['chunk_count']}개 청크, 게시판: 1개 게시글")
+                                                # 저장 완료 표시
+                                                st.session_state[f"saved_{k_note_id}"] = True
+                                            else:
+                                                error_msg = []
+                                                if not vector_result['success']:
+                                                    error_msg.append(f"VectorDB: {vector_result['message']}")
+                                                if not board_result['success']:
+                                                    error_msg.append(f"게시판: {board_result['message']}")
+                                                st.error(f"저장 실패: {', '.join(error_msg)}")
+                                                
+                                        except Exception as e:
+                                            st.error(f"저장 중 오류 발생: {str(e)}")
+                            
+                            with col_save2:
+                                if st.button(f"🔄 재구체화", key=f"re_enhance_{i}", use_container_width=True):
+                                    # 구체화 상태 초기화
+                                    del st.session_state[enhanced_key]
+                                    st.rerun()
+                            
+                            with col_save3:
+                                # JSON 다운로드
+                                import json
+                                enhanced_json = {
+                                    "original_knote": knote,
+                                    "enhanced_document": enhanced_result
+                                }
+                                json_str = json.dumps(enhanced_json, ensure_ascii=False, indent=2)
+                                st.download_button(
+                                    label="📥 전체 다운로드",
+                                    data=json_str,
+                                    file_name=f"{k_note_id}_enhanced.json",
+                                    mime="application/json",
+                                    key=f"download_enhanced_{i}",
+                                    use_container_width=True
+                                )
+                            
+                            # 저장 완료 표시
+                            if st.session_state.get(f"saved_{k_note_id}"):
+                                st.success("✅ 이 문서는 이미 VectorDB와 게시판에 저장되었습니다.")
+                        
+                        # 기본 액션 버튼 (구체화 전에도 사용 가능)
+                        st.markdown("---")
+                        st.markdown("### 🔧 기본 액션")
+                        col_basic1, col_basic2 = st.columns(2)
+                        
+                        with col_basic1:
+                            # 원본 K-Note JSON 다운로드
+                            import json
+                            json_str = json.dumps(knote, ensure_ascii=False, indent=2)
+                            st.download_button(
+                                label="📥 원본 K-Note 다운로드",
+                                data=json_str,
+                                file_name=f"{k_note_id}_original.json",
+                                mime="application/json",
+                                key=f"download_original_{i}",
+                                use_container_width=True
+                            )
+                        
+                        with col_basic2:
+                            if st.button(f"🗑️ 이 K-Note 삭제", key=f"delete_knote_{i}", use_container_width=True):
+                                # K-Note 삭제 (세션에서 제거)
+                                if 'creation_state' in st.session_state and 'knotes' in st.session_state.creation_state:
+                                    knotes_list = st.session_state.creation_state['knotes']
+                                    if i-1 < len(knotes_list):
+                                        del knotes_list[i-1]
+                                        st.success("K-Note가 삭제되었습니다.")
+                                        st.rerun()
                 else:
                     # 문자열인 경우 (기존 시뮬레이션 형식)
                     with st.expander(f"K-Note {i}: {knote}"):
                         st.write("**제목**: 새로운 지식 패턴 발견")
                         st.text_area("내용", str(knote), height=100, key=f"knote_{i}")
+    else:
+        # K-Note가 없는 경우
+        if creation_state.get("is_running"):
+            st.info("🔄 지식 창출이 진행 중입니다...")
+        elif creation_state.get("stages_completed"):
+            st.warning(f"⚠️ 지식 창출이 완료되었지만 K-Note가 생성되지 않았습니다. 종료 이유: {creation_state.get('stop_reason', 'unknown')}")
+            st.info("💡 팁: 품질 임계값을 낮추거나 최대 반복 횟수를 늘려보세요.")
         else:
-            st.info("생성된 K-Note가 없습니다.")
+            st.info("📝 지식 창출을 시작하면 결과가 여기에 표시됩니다.")
 
 # 메인 앱
 def main():

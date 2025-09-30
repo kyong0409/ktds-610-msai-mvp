@@ -30,6 +30,7 @@ from typing import List
 from knowledge.prompts import (
     ANALYZE_DOCUMENT_PROMPT,
     GENERATE_ENHANCED_KNOWLEDGE_DOCUMENT_PROMPT,
+    KNOTE_TO_STANDARD_DOC_PROMPT,
 )
 
 load_dotenv()
@@ -315,6 +316,196 @@ class KnowledgeService:
             }
 
             return enhanced_document
+
+    def enhance_knote_to_standard_document(self, knote_json: Dict, additional_improvement_points: str = "") -> Dict:
+        """K-Note를 표준 지식 문서로 변환"""
+        
+        template = KNOTE_TO_STANDARD_DOC_PROMPT
+        
+        prompt = PromptTemplate.from_template(template)
+        chain = prompt | llm | StrOutputParser()
+        
+        try:
+            # K-Note JSON을 문자열로 변환
+            import json
+            knote_json_str = json.dumps(knote_json, ensure_ascii=False, indent=2)
+            
+            response = chain.invoke({
+                "k_note_json": knote_json_str,
+                "additional_improvement_points": additional_improvement_points or ""
+            })
+            
+            # 생성된 표준 문서를 딕셔너리 형태로 반환
+            enhanced_document = {
+                "enhanced_content": response,
+                "quality_score": self._calculate_knote_quality_score(knote_json),
+                "generation_metadata": {
+                    "generated_at": datetime.now(),
+                    "method": "K-Note to Standard Document Enhancement",
+                    "version": "1.0",
+                    "k_note_id": knote_json.get("k_note_id", "unknown")
+                },
+                "original_knote": knote_json
+            }
+            
+            return enhanced_document
+            
+        except Exception as e:
+            print(f"K-Note 표준 문서 변환 실패: {e}")
+            
+            # Fallback: 기본 템플릿으로 변환
+            fallback_content = self._create_fallback_standard_document(knote_json)
+            
+            enhanced_document = {
+                "enhanced_content": fallback_content,
+                "quality_score": self._calculate_knote_quality_score(knote_json),
+                "generation_metadata": {
+                    "generated_at": datetime.now(),
+                    "method": "Fallback Standard Document Generation",
+                    "version": "1.0",
+                    "error": str(e),
+                    "k_note_id": knote_json.get("k_note_id", "unknown")
+                },
+                "original_knote": knote_json
+            }
+            
+            return enhanced_document
+
+    def _calculate_knote_quality_score(self, knote_json: Dict) -> int:
+        """K-Note의 품질 점수 계산"""
+        base_score = 70
+        
+        # 필수 필드 존재 여부
+        required_fields = ["title", "proposal", "applicability", "evidence"]
+        field_score = sum(10 for field in required_fields if knote_json.get(field))
+        
+        # Evidence 품질 점수
+        evidence_score = 0
+        evidence_list = knote_json.get("evidence", [])
+        if evidence_list:
+            # confidence 점수 평균
+            confidences = [e.get("confidence", 0) for e in evidence_list if isinstance(e, dict)]
+            if confidences:
+                avg_confidence = sum(confidences) / len(confidences)
+                evidence_score = int(avg_confidence * 20)  # 0-1 범위를 0-20으로 변환
+        
+        # 추천 실험 존재 여부
+        experiment_score = 5 if knote_json.get("recommended_experiments") else 0
+        
+        total_score = base_score + field_score + evidence_score + experiment_score
+        return min(total_score, 100)
+
+    def _create_fallback_standard_document(self, knote_json: Dict) -> str:
+        """K-Note를 기본 템플릿으로 변환 (fallback)"""
+        title = knote_json.get("title", "지식 문서")
+        proposal = knote_json.get("proposal", "내용 없음")
+        owners = knote_json.get("owners", ["미확인"])
+        version = knote_json.get("version", "1.0")
+        
+        # 키워드 추출
+        keywords = []
+        if knote_json.get("title"):
+            keywords.extend(knote_json["title"].split())
+        if knote_json.get("applicability", {}).get("when"):
+            keywords.extend([item[:20] for item in knote_json["applicability"]["when"][:3]])
+        
+        fallback_content = f"""### 메타데이터
+- 문서 제목: {title}
+- 작성자: {', '.join(owners) if isinstance(owners, list) else str(owners)}
+- 작성일: 미확인
+- 버전: {version}
+- 프로젝트/적용 분야: {knote_json.get('applicability', {}).get('when', ['미확인'])[0] if knote_json.get('applicability', {}).get('when') else '미확인'}
+- 주요 태그(키워드): {', '.join(keywords[:8]) if keywords else '미확인'}
+
+### 문서 본문
+
+1. 목적 (Purpose)
+{proposal}
+
+2. 배경 및 문제 정의 (Background / Problem Statement)
+"""
+        
+        # 적용성 정보 추가
+        applicability = knote_json.get("applicability", {})
+        if applicability.get("when"):
+            fallback_content += f"적용 조건:\n"
+            for condition in applicability["when"][:3]:
+                fallback_content += f"- {condition}\n"
+        
+        if applicability.get("when_not"):
+            fallback_content += f"\n비적용 조건:\n"
+            for condition in applicability["when_not"][:3]:
+                fallback_content += f"- {condition}\n"
+
+        fallback_content += f"""
+3. 접근 방법 및 절차 (Approach / Methodology)
+{knote_json.get('proposal', '상세 방법론은 원본 K-Note를 참조하세요.')}
+
+4. 결과 및 성과 (Results / Outcomes)
+"""
+        
+        # 메트릭 효과 추가
+        metrics_effect = knote_json.get("metrics_effect", {})
+        if metrics_effect:
+            for key, value in metrics_effect.items():
+                fallback_content += f"- {key}: {value}\n"
+        else:
+            fallback_content += "성과 지표는 원본 K-Note를 참조하세요.\n"
+
+        fallback_content += f"""
+5. 한계 및 교훈 (Limitations / Lessons Learned)
+"""
+        
+        # 위험 및 한계 추가
+        risks_limits = knote_json.get("risks_limits", [])
+        if risks_limits:
+            for risk in risks_limits[:5]:
+                fallback_content += f"- {risk}\n"
+        else:
+            fallback_content += "한계사항은 원본 K-Note를 참조하세요.\n"
+
+        fallback_content += f"""
+6. 적용 및 재사용 방안 (Application / Reusability)
+"""
+        
+        # 추천 실험 추가
+        experiments = knote_json.get("recommended_experiments", [])
+        if experiments:
+            fallback_content += "권장 실험/적용 절차:\n"
+            for exp in experiments[:3]:
+                if isinstance(exp, dict):
+                    fallback_content += f"- {exp.get('description', str(exp))}\n"
+                else:
+                    fallback_content += f"- {str(exp)}\n"
+        else:
+            fallback_content += "재사용 방안은 원본 K-Note를 참조하세요.\n"
+
+        fallback_content += f"""
+7. 참고 자료 (References)
+"""
+        
+        # Evidence 추가
+        evidence_list = knote_json.get("evidence", [])
+        if evidence_list:
+            for i, evidence in enumerate(evidence_list[:5], 1):
+                if isinstance(evidence, dict):
+                    doc_id = evidence.get("doc_id", "unknown")
+                    chunk_id = evidence.get("chunk_id", "unknown")
+                    quote = evidence.get("quote", "내용 없음")
+                    confidence = evidence.get("confidence", 0)
+                    fallback_content += f"{i}. [{doc_id}#{chunk_id}] \"{quote[:100]}...\" (confidence: {confidence:.2f})\n"
+        else:
+            fallback_content += "추가 출처 필요\n"
+
+        fallback_content += f"""
+### 보완이 필요한 점 (Improvement Points)
+- 카테고리: 문서화 / 이슈: 자동 변환으로 인한 정보 손실 / 제안: 원본 K-Note와 대조하여 내용 보완 / 근거: Fallback 템플릿 사용
+
+---
+*본 문서는 K-Note에서 자동 변환되었습니다. 원본 K-Note ID: {knote_json.get('k_note_id', 'unknown')}*
+"""
+        
+        return fallback_content
 
     def save_to_vector_db(self, analysis_result: Dict) -> Dict:
         """VectorDB에 저장"""

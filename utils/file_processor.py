@@ -39,24 +39,6 @@ class FileProcessor:
 
         return True, None
 
-    def extract_text(self, file) -> str:
-        """파일에서 텍스트 추출"""
-        file_ext = os.path.splitext(file.name)[1].lower()
-
-        try:
-            if file_ext == ".txt":
-                return str(file.read(), "utf-8")
-            elif file_ext == ".pdf":
-                return self._extract_from_pdf(file)
-            elif file_ext == ".docx":
-                return self._extract_from_docx(file)
-            elif file_ext == ".pptx":
-                return self._extract_from_pptx(file)
-            else:
-                return f"[{file.name}] 파일 내용 추출 시뮬레이션"
-        except Exception as e:
-            return f"파일 읽기 오류: {str(e)}"
-
     def save_temp_file(self, file) -> str:
         """임시 파일로 저장"""
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:

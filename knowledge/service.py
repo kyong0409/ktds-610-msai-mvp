@@ -27,6 +27,11 @@ import sqlite3
 import uuid
 from typing import List
 
+from knowledge.prompts import (
+    ANALYZE_DOCUMENT_PROMPT,
+    GENERATE_ENHANCED_KNOWLEDGE_DOCUMENT_PROMPT,
+)
+
 load_dotenv()
 
 AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
@@ -65,23 +70,6 @@ class KnowledgeService:
         self.file_processor = FileProcessor()
         self.markitdown = MarkItDown(docintel_endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT, docintel_credential=key)
 
-    def process_uploaded_file(self, uploaded_file) -> Tuple[Optional[Dict], Optional[str]]:
-        """업로드된 파일 처리"""
-        # 파일 유효성 검사
-        is_valid, error_message = self.file_processor.validate_file(uploaded_file)
-
-        if not is_valid:
-            st.error(error_message)
-            return None, None
-
-        # 파일 정보 추출
-        file_info = self.file_processor.get_file_info(uploaded_file)
-
-        # 파일 내용 추출
-        file_content = self.file_processor.extract_text(uploaded_file)
-
-        return file_info, file_content
-
     def convert_file_to_text(self, uploaded_file) -> Tuple[bool, str]:
         """MarkItDown을 사용하여 파일을 텍스트로 변환"""
         try:
@@ -115,123 +103,10 @@ class KnowledgeService:
 
             return False, f"파일 변환 중 오류 발생: {str(e)}"
 
-    def _fallback_text_extraction(self, uploaded_file) -> str:
-        """Fallback 텍스트 추출 (기존 방식)"""
-        try:
-            # 파일 포인터 리셋
-            uploaded_file.seek(0)
-
-            file_type = uploaded_file.type
-
-            if file_type == "text/plain":
-                return str(uploaded_file.read(), "utf-8")
-            elif file_type == "application/pdf":
-                try:
-                    import PyPDF2
-                    import io
-
-                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
-                    text = ""
-                    for page in pdf_reader.pages:
-                        text += page.extract_text() + "\n"
-                    return text
-                except:
-                    return f"[PDF 파일: {uploaded_file.name}] - PDF 변환을 위해 'pip install markitdown[pdf]'를 실행해주세요."
-            elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                try:
-                    from docx import Document
-                    import io
-
-                    doc = Document(io.BytesIO(uploaded_file.read()))
-                    text = ""
-                    for paragraph in doc.paragraphs:
-                        text += paragraph.text + "\n"
-                    return text
-                except:
-                    return f"[Word 파일: {uploaded_file.name}] - 파일 내용을 읽을 수 없습니다."
-            else:
-                return f"[{uploaded_file.name}] - 지원되지 않는 파일 형식입니다."
-
-        except Exception as e:
-            return f"[파일 처리 오류] {str(e)}"
-        finally:
-            # 파일 포인터 리셋
-            uploaded_file.seek(0)
-
-    def get_file_preview(self, uploaded_file) -> str:
-        """파일 미리보기 텍스트 반환"""
-        success, content = self.convert_file_to_text(uploaded_file)
-
-        if success:
-            # 미리보기는 처음 1000자만 표시
-            preview_text = content[:1000]
-            if len(content) > 1000:
-                preview_text += "\n\n... (계속)"
-            return preview_text
-        else:
-            return content  # 오류 메시지 반환
-
     def analyze_document(self, content: str, filename: str, settings: Dict = None) -> Dict:
         """문서 분석 실행"""
         
-        template = """
-        [역할]
-        당신은 IT 회사의 지식 관리 전문가입니다.
-        입력된 텍스트 문서(원본 지식 문서)를 분석하여, 지식자산화에 필요한 메타데이터를 추출하고 개선이 필요한 보완점을 도출하세요.
-
-        [입력]
-        {content}
-
-        [지시사항]
-        다음 항목을 반드시 포함하여 분석 결과를 작성하세요.
-
-        ## 1. 메타데이터 추출
-        - 문서 종류: {{PoC 보고서 | Lessons Learned | 기술자료 | 프로젝트 산출물 | 기타}}
-        - 주제(Topic): 한 줄 요약
-        - 작성일/작성자: 원문에서 발견되면 추출, 없으면 "미확인"
-        - 프로젝트/적용 분야: 문맥에서 유추
-        - 주요 키워드(태그): 핵심 기술, 도메인, 관련 용어를 5~10개
-
-        ## 2. 문서 구조/목차 분석
-        - 문서 내 존재하는 주요 섹션/항목 목록화
-        - 각 섹션이 다루는 내용 요약
-
-        ## 3. 활용 가능성 분석
-        - 이 문서가 지식자산으로서 어떤 가치를 가질 수 있는지
-        - 재사용/참조 가능한 부분
-
-        ## 4. 보완이 필요한 점
-        - 빠진 항목 (예: 목적, 결과, 교훈, 적용 방안 등)
-        - 불명확하거나 정리되지 않은 부분
-        - 검색/재사용 관점에서 개선해야 할 점
-
-        [출력 형식]
-        아래 JSON 구조로 결과를 제공합니다.
-
-        ```json
-        {{
-            "metadata": {{
-                "type": "",
-                "topic": "",
-                "author": "",
-                "date": "",
-                "project_area": "",
-                "keywords": []
-            }},
-            "structure": [
-                {{
-                "section": "",
-                "summary": ""
-                }}
-            ],
-            "usability": "이 문서가 지식자산으로서 어떻게 활용될 수 있는지 설명",
-            "improvements": [
-                "보완점1",
-                "보완점2",
-                "보완점3"
-            ]
-        }}
-        """
+        template = ANALYZE_DOCUMENT_PROMPT
 
         # LLM 분석 시도
         try:
@@ -287,35 +162,35 @@ class KnowledgeService:
 
         enhanced = f"""# {metadata.get('topic', '문서 분석 결과')}
 
-## 📋 문서 메타데이터
-- **문서 종류**: {metadata.get('type', '미분류')}
-- **주제**: {metadata.get('topic', '미확인')}
-- **작성자**: {metadata.get('author', '미확인')}
-- **작성일**: {metadata.get('date', '미확인')}
-- **프로젝트/분야**: {metadata.get('project_area', '미확인')}
-- **키워드**: {', '.join(metadata.get('keywords', []))}
+            ## 📋 문서 메타데이터
+            - **문서 종류**: {metadata.get('type', '미분류')}
+            - **주제**: {metadata.get('topic', '미확인')}
+            - **작성자**: {metadata.get('author', '미확인')}
+            - **작성일**: {metadata.get('date', '미확인')}
+            - **프로젝트/분야**: {metadata.get('project_area', '미확인')}
+            - **키워드**: {', '.join(metadata.get('keywords', []))}
 
-## 📑 원본 내용
-{original_content}
+            ## 📑 원본 내용
+            {original_content}
 
-## 🔍 문서 구조 분석
-"""
+            ## 🔍 문서 구조 분석
+            """
         for section in structure:
             enhanced += f"\n### {section.get('section', '섹션')}\n{section.get('summary', '내용 요약')}\n"
 
         enhanced += f"""
-## 💡 활용 가능성
-{usability}
+            ## 💡 활용 가능성
+            {usability}
 
-## ✨ 개선 제안사항
-"""
+            ## ✨ 개선 제안사항
+            """
         for i, improvement in enumerate(improvements, 1):
             enhanced += f"{i}. {improvement}\n"
 
         enhanced += """
----
-*본 문서는 AI 지식관리 시스템에 의해 분석 및 보완되었습니다.*
-"""
+            ---
+            *본 문서는 AI 지식관리 시스템에 의해 분석 및 보완되었습니다.*
+            """
         return enhanced.strip()
 
     def _calculate_quality_score(self, content: str, llm_result: Dict) -> int:
@@ -363,45 +238,7 @@ class KnowledgeService:
     def generate_enhanced_knowledge_document(self, analysis_result: Dict, filename: str) -> Dict:
         """분석 결과를 바탕으로 보완된 지식 문서 생성"""
         
-        template = """
-        [역할]  
-        당신은 IT 회사의 지식 관리 전문가이자 기술 문서 편집자입니다.  
-        당신의 임무는 입력된 문서와 보완사항을 종합하여, 사내에서 활용 가능한 "표준 지식 문서" 형태로 재구성하는 것입니다.  
-
-        [입력]  
-        1. 원본 문서 (Original Document)  
-        {original_content}
-        2. 보완사항 (Improvement Points)  
-        {improvement_points}
-
-        [지시사항]  
-        1. 원본 문서를 분석하여 **핵심 내용**을 유지합니다.  
-        2. 보완사항을 반영하여 내용의 공백을 채우거나 표현을 개선합니다.  
-        3. 최종 산출물은 다음 표준 형식을 따릅니다:  
-
-        ### 메타데이터
-        - 문서 제목: # 문서의 주제/핵심 내용이 잘 나타나도록 작성합니다.  
-        - 작성자: 원문에서 발견되면 추출, 없으면 "미확인"
-        - 작성일:  
-        - 버전:  
-        - 프로젝트/적용 분야: 문맥에서 유추
-        - 주요 태그(키워드):  
-
-        ### 문서 본문
-        1. 목적 (Purpose)  
-        2. 배경 및 문제 정의 (Background / Problem Statement)  
-        3. 접근 방법 및 절차 (Approach / Methodology)  
-        4. 결과 및 성과 (Results / Outcomes)  
-        5. 한계 및 교훈 (Limitations / Lessons Learned)  
-        6. 적용 및 재사용 방안 (Application / Reusability)  
-        7. 참고 자료 (References)  
-
-        4. 내용이 부족한 경우, 보완사항을 활용하여 합리적으로 보강합니다. 단, 근거 없이 새로운 사실을 창작하지는 않습니다.  
-        5. 표현은 **명확하고 간결하며, 사내 검색/학습에 적합한 용어**를 사용합니다.  
-
-        [출력]  
-        위 형식에 맞춘 **완성된 지식 문서**를 제공합니다.  
-        """
+        template = GENERATE_ENHANCED_KNOWLEDGE_DOCUMENT_PROMPT
 
         prompt = PromptTemplate.from_template(template)
 
@@ -508,84 +345,6 @@ class KnowledgeService:
                 "success": False,
                 "message": f"저장 실패: {str(e)}"
             }
-
-    def save_to_board(self, analysis_result: Dict) -> Dict:
-        """게시판에 저장"""
-        try:
-            board_post = {
-                "title": f"[AI 보완] {st.session_state.current_file_info['name']}",
-                "content": analysis_result['enhanced_content'],
-                "author": "AI Knowledge System",
-                "timestamp": datetime.now(),
-                "views": 0,
-                "quality_score": analysis_result['quality_score'],
-                "file_info": st.session_state.current_file_info,
-                "issues_found": analysis_result['issues_found'],
-                "improvements": analysis_result['improvements'],
-                "analysis_type": st.session_state.get('analysis_settings', {}).get('depth', '기본')
-            }
-
-            if 'board_posts' not in st.session_state:
-                st.session_state.board_posts = []
-
-            st.session_state.board_posts.append(board_post)
-
-            return {
-                "success": True,
-                "message": "게시판 등록 완료",
-                "count": len(st.session_state.board_posts)
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"등록 실패: {str(e)}"
-            }
-
-    def bulk_vector_to_board(self) -> Dict:
-        """VectorDB 문서들을 게시판으로 일괄 이동"""
-        vector_db = st.session_state.get('vector_db', [])
-
-        if not vector_db:
-            return {
-                "success": False,
-                "message": "VectorDB에 문서가 없습니다",
-                "count": 0
-            }
-
-        if 'board_posts' not in st.session_state:
-            st.session_state.board_posts = []
-
-        moved_count = 0
-        for doc in vector_db:
-            # 이미 게시판에 있는지 확인
-            existing = any(
-                post.get('title', '').endswith(doc.get('filename', ''))
-                for post in st.session_state.board_posts
-            )
-
-            if not existing:
-                board_post = {
-                    "title": f"[VectorDB 이동] {doc.get('filename', 'Unknown')}",
-                    "content": doc.get('content', ''),
-                    "author": "Knowledge Management System",
-                    "timestamp": datetime.now(),
-                    "views": 0,
-                    "quality_score": doc.get('quality_score', 0),
-                    "file_info": {"name": doc.get('filename', 'Unknown')},
-                    "issues_found": [],
-                    "improvements": [],
-                    "source": "vector_db"
-                }
-
-                st.session_state.board_posts.append(board_post)
-                moved_count += 1
-
-        return {
-            "success": True,
-            "message": f"{moved_count}개 문서 이동 완료",
-            "count": moved_count
-        }
 
     def get_knowledge_stats(self) -> Dict:
         """지식 관리 통계"""

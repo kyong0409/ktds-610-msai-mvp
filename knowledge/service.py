@@ -20,7 +20,10 @@ from langchain.text_splitter import (
     TokenTextSplitter
 )
 from langchain_experimental.text_splitter import SemanticChunker
-from langchain_community.vectorstores import Chroma
+try:
+    from langchain_chroma import Chroma
+except ImportError:
+    from langchain_community.vectorstores import Chroma
 import sqlite3
 import uuid
 from typing import List
@@ -797,11 +800,14 @@ class RAGService:
             doc_id = metadata.get('doc_id', str(uuid.uuid4()))
             metadata['doc_id'] = doc_id
 
+            # ChromaDB 호환 메타데이터로 정제 (None 값 제거, 복잡한 타입 제거)
+            clean_metadata = self._clean_metadata_for_chroma(metadata)
+
             # ChromaDB에 저장
             vectorstore = Chroma.from_texts(
                 texts=chunks,
                 embedding=self.embeddings,
-                metadatas=[{**metadata, 'chunk_id': i} for i in range(len(chunks))],
+                metadatas=[{**clean_metadata, 'chunk_id': i} for i in range(len(chunks))],
                 collection_name=collection_name,
                 persist_directory=self.chroma_persist_directory
             )
@@ -821,6 +827,30 @@ class RAGService:
                 "message": f"저장 실패: {str(e)}",
                 "chunk_count": 0
             }
+
+    def _clean_metadata_for_chroma(self, metadata: Dict) -> Dict:
+        """
+        ChromaDB 호환 메타데이터로 정제
+        - None 값 제거
+        - str, int, float, bool만 허용
+        - 중첩 딕셔너리나 리스트는 JSON 문자열로 변환
+        """
+        clean = {}
+        for key, value in metadata.items():
+            if value is None:
+                continue  # None 값은 제외
+            elif isinstance(value, (str, int, float, bool)):
+                clean[key] = value
+            elif isinstance(value, (dict, list)):
+                # 복잡한 타입은 JSON 문자열로 변환
+                try:
+                    clean[key] = json.dumps(value, ensure_ascii=False)
+                except:
+                    clean[key] = str(value)
+            else:
+                # 기타 타입은 문자열로 변환
+                clean[key] = str(value)
+        return clean
 
     def search_similar(self, query: str, k: int = 5,
                       collection_name: str = "knowledge_base") -> List[Dict]:

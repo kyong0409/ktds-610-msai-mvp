@@ -256,7 +256,7 @@ def knowledge_registration_page():
                                 "enhanced_url": enhanced_url,
                                 "quality_score": st.session_state.enhanced_document.get('quality_score', 0)
                             },
-                            split_type="recursive"
+                            split_type="semantic"
                         )
 
                         # RAGService로 게시판 DB에 저장

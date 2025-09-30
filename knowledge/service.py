@@ -479,52 +479,6 @@ class KnowledgeService:
 
             return enhanced_document
 
-    def _expert_analysis(self, content: str, filename: str) -> Dict:
-        """전문가 수준 분석"""
-        basic_result = self.document_analyzer.analyze_document(content, filename)
-
-        # 전문가 분석 추가 요소
-        expert_additions = {
-            "expert_insights": [
-                "업계 표준과의 비교 분석 필요",
-                "최신 동향 반영 권장",
-                "실무 케이스 스터디 추가 제안",
-                "정량적 데이터 보강 필요"
-            ],
-            "technical_assessment": {
-                "complexity_level": "중급",
-                "target_audience": "실무진",
-                "implementation_difficulty": "보통"
-            },
-            "quality_score": min(basic_result["quality_score"] + 10, 100)  # 전문가 분석으로 품질 점수 향상
-        }
-
-        # 기본 결과에 전문가 분석 추가
-        result = {**basic_result, **expert_additions}
-        return result
-
-    def _detailed_analysis(self, content: str, filename: str) -> Dict:
-        """상세 분석"""
-        basic_result = self.document_analyzer.analyze_document(content, filename)
-
-        # 상세 분석 추가 요소
-        detailed_additions = {
-            "detailed_metrics": {
-                "readability_score": 78,
-                "technical_accuracy": 85,
-                "completeness_ratio": 0.75
-            },
-            "section_analysis": [
-                {"section": "개요", "completeness": 90, "quality": 85},
-                {"section": "본문", "completeness": 70, "quality": 80},
-                {"section": "결론", "completeness": 60, "quality": 75}
-            ],
-            "quality_score": min(basic_result["quality_score"] + 5, 100)  # 상세 분석으로 품질 점수 향상
-        }
-
-        result = {**basic_result, **detailed_additions}
-        return result
-
     def save_to_vector_db(self, analysis_result: Dict) -> Dict:
         """VectorDB에 저장"""
         try:
@@ -753,7 +707,7 @@ class RAGService:
         conn.commit()
         conn.close()
 
-    def split_text(self, text: str, split_type: str = "recursive",
+    def split_text(self, text: str, split_type: str = "semantic",
                    chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
         """
         텍스트를 청크로 분할
@@ -783,7 +737,7 @@ class RAGService:
             elif split_type == "semantic":
                 splitter = SemanticChunker(
                     embeddings=self.embeddings,
-                    breakpoint_threshold_type="percentile"
+                    breakpoint_threshold_type="gradient"
                 )
             elif split_type == "token":
                 splitter = TokenTextSplitter(
@@ -806,7 +760,7 @@ class RAGService:
             return splitter.split_text(text)
 
     def embed_and_store(self, text: str, metadata: Dict = None,
-                       split_type: str = "recursive",
+                       split_type: str = "semantic",
                        chunk_size: int = 1000,
                        chunk_overlap: int = 200,
                        collection_name: str = "knowledge_base") -> Dict:

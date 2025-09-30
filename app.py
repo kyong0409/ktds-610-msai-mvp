@@ -298,15 +298,9 @@ def board_page():
 
             st.markdown("---")
 
-            # 다운로드 링크가 있으면 표시
-            if post.get('enhanced_doc_url') or post.get('original_doc_url'):
-                col_link1, col_link2 = st.columns(2)
-                with col_link1:
-                    if post.get('original_doc_url'):
-                        st.markdown(f"[📥 원본 문서 다운로드]({post['original_doc_url']})")
-                with col_link2:
-                    if post.get('enhanced_doc_url'):
-                        st.markdown(f"[📥 보완 문서 다운로드]({post['enhanced_doc_url']})")
+            # 원본 문서 다운로드 링크만 표시
+            if post.get('original_doc_url'):
+                st.markdown(f"[📥 원본 문서 다운로드]({post['original_doc_url']})")
                 st.markdown("---")
 
             st.text_area("내용", post['content'], height=200, key=f"content_{i}")
@@ -752,10 +746,10 @@ def show_creation_results():
 
                         # 구체화 단계
                         st.markdown("### 📝 문서 구체화")
-                        
-                        # 구체화 상태 확인
-                        enhanced_key = f"enhanced_doc_{k_note_id}"
-                        
+
+                        # 각 K-Note별로 고유한 키 생성 (인덱스 i 사용)
+                        enhanced_key = f"enhanced_doc_{k_note_id}_{i}"
+
                         if enhanced_key not in st.session_state:
                             # 구체화 버튼
                             col_enhance1, col_enhance2 = st.columns([2, 1])
@@ -906,8 +900,9 @@ def show_creation_results():
                             
                             with col_save2:
                                 if st.button(f"🔄 재구체화", key=f"re_enhance_{i}", use_container_width=True):
-                                    # 구체화 상태 초기화
-                                    del st.session_state[enhanced_key]
+                                    # 해당 K-Note의 구체화 상태만 초기화
+                                    if enhanced_key in st.session_state:
+                                        del st.session_state[enhanced_key]
                                     st.rerun()
                             
                             with col_save3:

@@ -69,7 +69,24 @@ class KnowledgeService:
 
     def __init__(self):
         self.file_processor = FileProcessor()
-        self.markitdown = MarkItDown(docintel_endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT, docintel_credential=key)
+
+        # MarkItDown 초기화 (Azure Document Intelligence 선택적 사용)
+        try:
+            if AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY:
+                print(f"[INFO] MarkItDown with Azure Document Intelligence 초기화 중...")
+                self.markitdown = MarkItDown(
+                    docintel_endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+                    docintel_credential=key
+                )
+                print(f"[INFO] MarkItDown 초기화 성공 (Azure DI 활성화)")
+            else:
+                print(f"[WARNING] Azure Document Intelligence 설정 누락, 기본 MarkItDown 사용")
+                self.markitdown = MarkItDown()
+                print(f"[INFO] MarkItDown 초기화 성공 (기본 모드)")
+        except Exception as e:
+            print(f"[ERROR] MarkItDown 초기화 실패: {e}")
+            print(f"[INFO] Fallback: 기본 MarkItDown 사용")
+            self.markitdown = MarkItDown()
 
     def convert_file_to_text(self, uploaded_file) -> Tuple[bool, str]:
         """MarkItDown을 사용하여 파일을 텍스트로 변환"""
@@ -82,8 +99,12 @@ class KnowledgeService:
                 tmp_file.write(uploaded_file.read())
                 tmp_file_path = tmp_file.name
 
+            print(f"[DEBUG] MarkItDown 변환 시도: {tmp_file_path}")
+
             # MarkItDown으로 변환
             result = self.markitdown.convert(tmp_file_path, keep_data_uris=True)
+
+            print(f"[DEBUG] MarkItDown 변환 성공")
 
             # 임시 파일 삭제
             os.unlink(tmp_file_path)
@@ -94,15 +115,45 @@ class KnowledgeService:
             return True, result.text_content
 
         except Exception as e:
+            print(f"[ERROR] MarkItDown 변환 실패: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
             # 업로드 파일 포인터 리셋
             uploaded_file.seek(0)
 
             # Fallback: 기존 파일 처리 방식 사용
+            print(f"[INFO] Fallback 텍스트 추출 시도")
             fallback_content = self._fallback_text_extraction(uploaded_file)
             if fallback_content:
+                print(f"[INFO] Fallback 텍스트 추출 성공 ({len(fallback_content)} chars)")
                 return True, fallback_content
 
             return False, f"파일 변환 중 오류 발생: {str(e)}"
+
+    def _fallback_text_extraction(self, uploaded_file) -> str:
+        """Fallback: 기본 텍스트 추출 방식"""
+        try:
+            # 파일 타입별 기본 텍스트 추출
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+
+            if file_extension == 'txt':
+                # 텍스트 파일은 바로 읽기
+                content = uploaded_file.read().decode('utf-8', errors='ignore')
+                return content
+            elif file_extension == 'pdf':
+                # PDF는 기본 메시지 반환
+                return f"PDF 파일: {uploaded_file.name}\n(MarkItDown 변환 실패, 수동 처리 필요)"
+            elif file_extension in ['docx', 'doc']:
+                # Word 파일은 기본 메시지 반환
+                return f"Word 문서: {uploaded_file.name}\n(MarkItDown 변환 실패, 수동 처리 필요)"
+            elif file_extension in ['pptx', 'ppt']:
+                # PowerPoint 파일은 기본 메시지 반환
+                return f"PowerPoint 문서: {uploaded_file.name}\n(MarkItDown 변환 실패, 수동 처리 필요)"
+            else:
+                return f"알 수 없는 파일 형식: {uploaded_file.name}"
+        except Exception as e:
+            return f"Fallback 텍스트 추출 실패: {str(e)}"
 
     def analyze_document(self, content: str, filename: str, settings: Dict = None) -> Dict:
         """문서 분석 실행"""
